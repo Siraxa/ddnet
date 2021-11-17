@@ -1936,8 +1936,6 @@ set_src(ENGINE_SERVER GLOB_RECURSE src/engine/server
 set_src(GAME_SERVER GLOB_RECURSE src/game/server
   ai/genetics.cpp
   ai/genetics.h
-  entities/wall.cpp
-  entities/wall.h
   ddracechat.cpp
   ddracechat.h
   ddracecommands.cpp
@@ -1961,6 +1959,8 @@ set_src(GAME_SERVER GLOB_RECURSE src/game/server
   entities/plasma.h
   entities/projectile.cpp
   entities/projectile.h
+  entities/wall.cpp
+  entities/wall.h
   entity.cpp
   entity.h
   eventhandler.cpp

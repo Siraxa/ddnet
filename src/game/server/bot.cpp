@@ -14,6 +14,8 @@
 #include "entities/pickup.h"
 #include "player.h"
 
+#include "ai/defence.h"
+
 CBot::CBot(CBotEngine *pBotEngine, CPlayer *pPlayer) :
 	m_Genetics(CTarget::NUM_TARGETS, 10)
 {
@@ -31,10 +33,13 @@ CBot::CBot(CBotEngine *pBotEngine, CPlayer *pPlayer) :
 	UpdateTargetOrder();
 
 	BotEngine()->RegisterBot(m_pPlayer->GetCID(), this);
+
+	m_pStrategyPosition = NULL;
 }
 
 CBot::~CBot()
 {
+	delete m_pStrategyPosition;
 	BotEngine()->UnRegisterBot(m_pPlayer->GetCID());
 	m_pPath->m_Size = 0;
 	GameServer()->Server()->SnapFreeID(m_SnapID);
@@ -72,10 +77,10 @@ vec2 CBot::ClosestCharacter()
 	float d = -1;
 	vec2 Pos = vec2(0, 0);
 	for(int c = 0; c < MAX_CLIENTS; c++)
-		if(c != m_pPlayer->GetCID() && GameServer()->m_apPlayers[c] && GameServer()->m_apPlayers[c]->GetCharacter() && (d < -1 || d > distance(m_pPlayer->GetCharacter()->m_Pos, GameServer()->m_apPlayers[c]->GetCharacter()->m_Pos)))
+		if(c != m_pPlayer->GetCID() && GameServer()->m_apPlayers[c] && GameServer()->m_apPlayers[c]->GetCharacter() && (d < -1 || d > distance(m_pPlayer->GetCharacter()->GetPos(), GameServer()->m_apPlayers[c]->GetCharacter()->GetPos())))
 		{
-			d = distance(m_pPlayer->GetCharacter()->m_Pos, GameServer()->m_apPlayers[c]->GetCharacter()->m_Pos);
-			Pos = GameServer()->m_apPlayers[c]->GetCharacter()->m_Pos;
+			d = distance(m_pPlayer->GetCharacter()->GetPos(), GameServer()->m_apPlayers[c]->GetCharacter()->GetPos());
+			Pos = GameServer()->m_apPlayers[c]->GetCharacter()->GetPos();
 		}
 	return Pos;
 }
@@ -90,7 +95,7 @@ void CBot::UpdateTarget()
 	if(m_ComputeTarget.m_StartTick + 30 * GameServer()->Server()->TickSpeed() < GameServer()->Server()->Tick())
 		FindNewTarget = true;
 
-	// Target player became zombie
+		// Target player became zombie
 	if(m_ComputeTarget.m_Type == CTarget::TARGET_PLAYER &&
 		GameServer()->m_apPlayers[m_ComputeTarget.m_PlayerCID] &&
 		sameInfTeam(m_ComputeTarget.m_PlayerCID))
@@ -98,13 +103,13 @@ void CBot::UpdateTarget()
 
 	if(m_ComputeTarget.m_Type == CTarget::TARGET_AIR)
 	{
-		float dist = distance(m_pPlayer->GetCharacter()->m_Pos, m_ComputeTarget.m_Pos);
+		float dist = distance(m_pPlayer->GetCharacter()->GetPos(), m_ComputeTarget.m_Pos);
 		if(dist < 60)
 			FindNewTarget = true;
 	}
 	if(m_ComputeTarget.m_Type > CTarget::TARGET_PLAYER)
 	{
-		float dist = distance(m_pPlayer->GetCharacter()->m_Pos, m_ComputeTarget.m_Pos);
+		float dist = distance(m_pPlayer->GetCharacter()->GetPos(), m_ComputeTarget.m_Pos);
 		if(dist < 28)
 			FindNewTarget = true;
 	}
@@ -118,13 +123,56 @@ void CBot::UpdateTarget()
 		{
 			switch(m_aTargetOrder[i])
 			{
+			/*case CTarget::TARGET_FLAG:
+				if(GameServer()->m_pController->IsFlagGame())
+				{
+					int Team = m_pPlayer->GetTeam();
+					CGameControllerCTF *pController = (CGameControllerCTF *)GameServer()->m_pController;
+					CFlag **apFlags = pController->m_apFlags;
+					if(apFlags[Team])
+					{
+						// Retrieve missing flag
+						if(!apFlags[Team]->IsAtStand() && !apFlags[Team]->GetCarrier())
+						{
+							m_ComputeTarget.m_Pos = apFlags[Team]->GetPos();
+							m_ComputeTarget.m_Type = CTarget::TARGET_FLAG;
+							return;
+						}
+						// Target flag carrier
+						if(!apFlags[Team]->IsAtStand() && apFlags[Team]->GetCarrier())
+						{
+							m_ComputeTarget.m_Pos = apFlags[Team]->GetPos();
+							m_ComputeTarget.m_Type = CTarget::TARGET_PLAYER;
+							m_ComputeTarget.m_PlayerCID = apFlags[Team]->GetCarrier()->GetPlayer()->GetCID();
+							return;
+						}
+					}
+					if(apFlags[Team ^ 1])
+					{
+						// Go to enemy flagstand
+						if(apFlags[Team ^ 1]->IsAtStand())
+						{
+							m_ComputeTarget.m_Pos = BotEngine()->GetFlagStandPos(Team ^ 1);
+							m_ComputeTarget.m_Type = CTarget::TARGET_FLAG;
+							return;
+						}
+						// Go to base carrying flag
+						if(apFlags[Team ^ 1]->GetCarrier() == m_pPlayer->GetCharacter() && (!apFlags[Team] || apFlags[Team]->IsAtStand()))
+						{
+							m_ComputeTarget.m_Pos = BotEngine()->GetFlagStandPos(Team);
+							m_ComputeTarget.m_Type = CTarget::TARGET_FLAG;
+							return;
+						}
+					}
+				}
+				break;*/
 			case CTarget::TARGET_ARMOR:
 			case CTarget::TARGET_HEALTH:
 			case CTarget::TARGET_WEAPON_SHOTGUN:
 			case CTarget::TARGET_WEAPON_GRENADE:
 			case CTarget::TARGET_WEAPON_LASER:
 			{
-				float Radius = distance(m_pPlayer->GetCharacter()->m_Pos, ClosestCharacter());
+				float Radius = distance(m_pPlayer->GetCharacter()->GetPos(), ClosestCharacter());
 				if(NeedPickup(m_aTargetOrder[i]) && FindPickup(m_aTargetOrder[i], &m_ComputeTarget.m_Pos, Radius))
 				{
 					m_ComputeTarget.m_Type = m_aTargetOrder[i];
@@ -134,32 +182,22 @@ void CBot::UpdateTarget()
 			break;
 			case CTarget::TARGET_PLAYER:
 			{
+				int Team = m_pPlayer->GetTeam();
 				int Count = 0;
 				for(int c = 0; c < MAX_CLIENTS; c++)
-				{
-					if(c != m_pPlayer->GetCID() && GameServer()->m_apPlayers[c] && GameServer()->m_apPlayers[c]->GetCharacter() &&
-						!sameTeam(c) && !sameInfTeam(c))
-					{
+					if(c != m_pPlayer->GetCID() && GameServer()->m_apPlayers[c] && GameServer()->m_apPlayers[c]->GetCharacter() && (GameServer()->m_apPlayers[c]->GetTeam() != Team || !GameServer()->m_pController->IsTeamplay()) && !sameInfTeam(c))
 						Count++;
-					}
-				}
 				if(Count)
 				{
 					Count = random_int() % Count + 1;
 					int c = 0;
 					for(; Count; c++)
-					{
-						if(c != m_pPlayer->GetCID() && GameServer()->m_apPlayers[c] && GameServer()->m_apPlayers[c]->GetCharacter() &&
-							!sameTeam(c) && !sameInfTeam(c))
-						{
+						if(c != m_pPlayer->GetCID() && GameServer()->m_apPlayers[c] && GameServer()->m_apPlayers[c]->GetCharacter() && (GameServer()->m_apPlayers[c]->GetTeam() != Team || !GameServer()->m_pController->IsTeamplay()) && !sameInfTeam(c))
 							Count--;
-						}
-					}
 					c--;
-					m_ComputeTarget.m_Pos = GameServer()->m_apPlayers[c]->GetCharacter()->m_Pos;
+					m_ComputeTarget.m_Pos = GameServer()->m_apPlayers[c]->GetCharacter()->GetPos();
 					m_ComputeTarget.m_Type = CTarget::TARGET_PLAYER;
 					m_ComputeTarget.m_PlayerCID = c;
-
 					return;
 				}
 			}
@@ -167,13 +205,21 @@ void CBot::UpdateTarget()
 			case CTarget::TARGET_AIR:
 			{
 				// Random destination
-				int asd = BotEngine()->GetGraph()->m_NumVertices;
-				if(asd == 0)
-					asd++;
-				int r = random_int() % asd;
-				m_ComputeTarget.m_Pos = BotEngine()->GetGraph()->m_pVertices[r].m_Pos;
-				m_ComputeTarget.m_Type = CTarget::TARGET_AIR;
-				return;
+				int Count = 0;
+				for(int v = 0; v < BotEngine()->GetGraph()->m_NumVertices; v++)
+					if(m_pStrategyPosition->IsInsideZone(BotEngine()->GetGraph()->m_pVertices[v].m_Pos))
+						Count++;
+				if(Count)
+				{
+					Count = random_int() % Count + 1;
+					int v = 0;
+					for(; Count; v++)
+						if(m_pStrategyPosition->IsInsideZone(BotEngine()->GetGraph()->m_pVertices[v].m_Pos))
+							Count--;
+					m_ComputeTarget.m_Pos = BotEngine()->GetGraph()->m_pVertices[--v].m_Pos;
+					m_ComputeTarget.m_Type = CTarget::TARGET_AIR;
+					return;
+				}
 			}
 			}
 		}
@@ -182,7 +228,7 @@ void CBot::UpdateTarget()
 	if(m_ComputeTarget.m_Type == CTarget::TARGET_PLAYER)
 	{
 		CPlayer *pPlayer = GameServer()->m_apPlayers[m_ComputeTarget.m_PlayerCID];
-		if(Collision()->FastIntersectLine(m_ComputeTarget.m_Pos, pPlayer->GetCharacter()->m_Pos, 0, 0))
+		if(Collision()->FastIntersectLine(m_ComputeTarget.m_Pos, pPlayer->GetCharacter()->GetPos(), 0, 0))
 		{
 			m_ComputeTarget.m_NeedUpdate = true;
 			m_ComputeTarget.m_Pos = pPlayer->GetCharacter()->m_Pos;
@@ -240,10 +286,10 @@ bool CBot::FindPickup(int Type, vec2 *pPos, float Radius)
 	for(; pEnt; pEnt = pEnt->TypeNext())
 	{
 		CPickup *pPickup = (CPickup *)pEnt;
-		if(pPickup->GetType() == Type && pPickup->GetSubType() == SubType && pPickup->IsSpawned() && Radius > distance(pPickup->m_Pos, m_pPlayer->GetCharacter()->m_Pos))
+		if(pPickup->GetType() == Type && pPickup->GetSubType() == SubType && pPickup->IsSpawned() && Radius > distance(pPickup->GetPos(), m_pPlayer->GetCharacter()->GetPos()))
 		{
-			*pPos = pPickup->m_Pos;
-			Radius = distance(pPickup->m_Pos, m_pPlayer->GetCharacter()->m_Pos);
+			*pPos = pPickup->GetPos();
+			Radius = distance(pPickup->GetPos(), m_pPlayer->GetCharacter()->GetPos());
 			Found = true;
 		}
 	}
@@ -259,6 +305,13 @@ void CBot::Tick()
 {
 	if(!m_pPlayer->GetCharacter())
 		return;
+
+	if(m_pStrategyPosition == NULL)
+	{
+		m_pStrategyPosition = new CDefence(BotEngine());
+		m_pStrategyPosition->SetTeam(0);
+	}
+
 	const CCharacterCore *pMe = m_pPlayer->GetCharacter()->Core();
 
 	UpdateTarget();
@@ -425,22 +478,6 @@ void CBot::HandleHook(bool SeeTarget)
 	}
 }
 
-
-template<typename T>
-inline vector2_base<T> closest_point_on_line(vector2_base<T> line_point0, vector2_base<T> line_point1, vector2_base<T> target_point)
-{
-	vector2_base<T> c = target_point - line_point0;
-	vector2_base<T> v = (line_point1 - line_point0);
-	v = normalize(v);
-	T d = length(line_point0 - line_point1);
-	T t = dot(v, c) / d;
-	return mix(line_point0, line_point1, clamp(t, (T)0, (T)1));
-	/*
-	if (t < 0) t = 0;
-	if (t > 1.0f) return 1.0f;
-	return t;*/
-}
-
 void CBot::HandleWeapon(bool SeeTarget)
 {
 	CCharacter *pMe = m_pPlayer->GetCharacter();
@@ -448,6 +485,7 @@ void CBot::HandleWeapon(bool SeeTarget)
 	if(!pMe)
 		return;
 
+	int Team = m_pPlayer->GetTeam();
 	vec2 Pos = pMe->Core()->m_Pos;
 
 	CCharacterCore *apTarget[MAX_CLIENTS];
@@ -462,11 +500,8 @@ void CBot::HandleWeapon(bool SeeTarget)
 			apTarget[Count++] = apTarget[0];
 			apTarget[0] = GameServer()->m_apPlayers[c]->GetCharacter()->Core();
 		}
-		else if(GameServer()->m_apPlayers[c] && GameServer()->m_apPlayers[c]->GetCharacter() &&
-			!sameTeam(c) && !sameInfTeam(c))
-		{
+		else if(GameServer()->m_apPlayers[c] && GameServer()->m_apPlayers[c]->GetCharacter() && (GameServer()->m_apPlayers[c]->GetTeam() != Team || !GameServer()->m_pController->IsTeamplay()) && !sameInfTeam(c))
 			apTarget[Count++] = GameServer()->m_apPlayers[c]->GetCharacter()->Core();
-		}
 	}
 	int Weapon = -1;
 	vec2 Target;
@@ -478,7 +513,7 @@ void CBot::HandleWeapon(bool SeeTarget)
 		if(ClosestRange < Close)
 		{
 			if(m_pPlayer->Infected())
-				Weapon = WEAPON_HAMMER;
+			Weapon = WEAPON_HAMMER;
 			break;
 		}
 		else if(pMe->GetAmmoCount(WEAPON_LASER) != 0 && ClosestRange < GameServer()->Tuning()->m_LaserReach && !Collision()->FastIntersectLine(Pos, apTarget[c]->m_Pos, 0, 0))
@@ -492,6 +527,8 @@ void CBot::HandleWeapon(bool SeeTarget)
 		int GoodDir = -1;
 
 		vec2 aProjectilePos[BOT_HOOK_DIRS];
+
+		const int NbLoops = 10;
 
 		vec2 aTargetPos[MAX_CLIENTS];
 		vec2 aTargetVel[MAX_CLIENTS];
@@ -522,8 +559,6 @@ void CBot::HandleWeapon(bool SeeTarget)
 				Time = GameServer()->Tuning()->m_GunLifetime;
 				break;
 			}
-
-			const int NbLoops = 10;
 			//DTime /= NbLoops;
 			int DTick = (int)(Time * GameServer()->Server()->TickSpeed() / NbLoops);
 			// DTime *= Speed;
@@ -557,7 +592,8 @@ void CBot::HandleWeapon(bool SeeTarget)
 					aIsDead[i] = Collision()->FastIntersectLine(aProjectilePos[i], NextPos, &NextPos, 0);
 					for(int c = 0; c < Count; c++)
 					{
-						vec2 InterPos = closest_point_on_line(aProjectilePos[i], NextPos, aTargetPos[c]);
+						vec2 InterPos;
+						closest_point_on_line(aProjectilePos[i], NextPos, aTargetPos[c], InterPos);
 						if(distance(aTargetPos[c], InterPos) < 28)
 						{
 							GoodDir = i;
@@ -568,8 +604,8 @@ void CBot::HandleWeapon(bool SeeTarget)
 				}
 				for(int c = 0; c < Count; c++)
 				{
-					Collision()->MoveBox(&aTargetPos[c], &aTargetVel[c], vec2(28.f, 28.f), 0);
-					//Collision()->FastIntersectLine(aTargetPos[c], aTargetPos[c]+aTargetVel[c], 0, &aTargetPos[c]);
+					//Collision()->MoveBox(&aTargetPos[c], &aTargetVel[c], vec2(28.f,28.f), 0);
+					Collision()->FastIntersectLine(aTargetPos[c], aTargetPos[c] + aTargetVel[c], 0, &aTargetPos[c]);
 					aTargetVel[c].y += GameServer()->Tuning()->m_Gravity * DTick * DTick;
 				}
 			}
@@ -598,7 +634,7 @@ void CBot::HandleWeapon(bool SeeTarget)
 
 void CBot::UpdateEdge()
 {
-	vec2 Pos = m_pPlayer->GetCharacter()->m_Pos;
+	vec2 Pos = m_pPlayer->GetCharacter()->GetPos();
 	if(m_ComputeTarget.m_Type == CTarget::TARGET_EMPTY)
 	{
 		dbg_msg("bot", "no edge");
@@ -617,7 +653,7 @@ void CBot::MakeChoice(bool UseTarget)
 {
 	if(!UseTarget)
 	{
-		vec2 Pos = m_pPlayer->GetCharacter()->m_Pos;
+		vec2 Pos = m_pPlayer->GetCharacter()->GetPos();
 
 		if(m_pPath->m_Size)
 		{
@@ -715,12 +751,6 @@ void CBot::MakeChoice(bool UseTarget)
 	m_Flags = Flags;
 }
 
-bool CBot::sameTeam(int player)
-{
-	return (GameServer()->m_pController->IsTeamplay() &&
-		(GameServer()->m_apPlayers[player]->GetTeam() == m_pPlayer->GetTeam()));
-}
-
 bool CBot::sameInfTeam(int player)
 {
 	return m_pPlayer->IsInfTeam(player);
@@ -763,10 +793,10 @@ void CBot::Snap(int SnappingClient)
 		pObj->m_StartTick = GameServer()->Server()->Tick();
 	}
 }
-
+	
 const char *CBot::GetName()
 {
-	return g_BotName[m_pPlayer->GetCID()];
+	return g_aBotName[m_pPlayer->GetCID()];
 }
 
 const char *CBot::GetRepartee()

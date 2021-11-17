@@ -171,6 +171,8 @@ public:
 
 	int m_Number;
 	int m_Layer;
+
+	vec2 GetPos() const { return m_Pos; }
 };
 
 #endif
