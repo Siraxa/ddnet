@@ -1936,6 +1936,10 @@ set_src(ENGINE_SERVER GLOB_RECURSE src/engine/server
 set_src(GAME_SERVER GLOB_RECURSE src/game/server
   ai/genetics.cpp
   ai/genetics.h
+  ai/defence.cpp
+  ai/defence.h
+  ai/strategy.cpp
+  ai/strategy.h
   ddracechat.cpp
   ddracechat.h
   ddracecommands.cpp
