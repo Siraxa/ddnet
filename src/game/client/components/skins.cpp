@@ -4,6 +4,7 @@
 #include <base/math.h>
 #include <base/system.h>
 #include <ctime>
+#include <thread>
 
 #include <engine/engine.h>
 #include <engine/graphics.h>
@@ -34,16 +35,217 @@ int CSkins::CGetPngFile::OnCompletion(int State)
 	{
 		State = HTTP_ERROR;
 	}
+
+		
+
+	if(State == HTTP_DONE)
+	{
+	
+
+			dbg_msg("st", "asdf1");
+
+
+		auto graphics = m_pSkins->Kernel()->RequestInterface<IGraphics>();
+
+				dbg_msg("st", "asdf2");
+
+		char aBuf[512];
+
+		if(!graphics->CheckImageDivisibility(m_aName, m_Info, g_pData->m_aSprites[SPRITE_TEE_BODY].m_pSet->m_Gridx, g_pData->m_aSprites[SPRITE_TEE_BODY].m_pSet->m_Gridy, true))
+		{
+			return 0;
+		}
+		if(!graphics->IsImageFormatRGBA(m_aName, m_Info))
+		{
+			return 0;
+		}
+		dbg_msg("st", "asdf3");
+
+		CSkin Skin;
+		Skin.m_IsVanilla = IsVanillaSkin(m_aName);
+		Skin.m_OriginalSkin.m_Body = graphics->LoadSpriteTexture(m_Info, &g_pData->m_aSprites[SPRITE_TEE_BODY]);
+		Skin.m_OriginalSkin.m_BodyOutline = graphics->LoadSpriteTexture(m_Info, &g_pData->m_aSprites[SPRITE_TEE_BODY_OUTLINE]);
+		Skin.m_OriginalSkin.m_Feet = graphics->LoadSpriteTexture(m_Info, &g_pData->m_aSprites[SPRITE_TEE_FOOT]);
+		Skin.m_OriginalSkin.m_FeetOutline = graphics->LoadSpriteTexture(m_Info, &g_pData->m_aSprites[SPRITE_TEE_FOOT_OUTLINE]);
+		Skin.m_OriginalSkin.m_Hands = graphics->LoadSpriteTexture(m_Info, &g_pData->m_aSprites[SPRITE_TEE_HAND]);
+		Skin.m_OriginalSkin.m_HandsOutline = graphics->LoadSpriteTexture(m_Info, &g_pData->m_aSprites[SPRITE_TEE_HAND_OUTLINE]);
+
+		for (int i = 0; i < 6; ++i) {
+			Skin.m_OriginalSkin.m_Eyes[i] = graphics->LoadSpriteTexture(m_Info, &g_pData->m_aSprites[SPRITE_TEE_EYE_NORMAL + i]);
+		}
+
+		int FeetGridPixelsWidth = (m_Info.m_Width / g_pData->m_aSprites[SPRITE_TEE_FOOT].m_pSet->m_Gridx);
+		int FeetGridPixelsHeight = (m_Info.m_Height / g_pData->m_aSprites[SPRITE_TEE_FOOT].m_pSet->m_Gridy);
+		int FeetWidth = g_pData->m_aSprites[SPRITE_TEE_FOOT].m_W * FeetGridPixelsWidth;
+		int FeetHeight = g_pData->m_aSprites[SPRITE_TEE_FOOT].m_H * FeetGridPixelsHeight;
+
+		int FeetOffsetX = g_pData->m_aSprites[SPRITE_TEE_FOOT].m_X * FeetGridPixelsWidth;
+		int FeetOffsetY = g_pData->m_aSprites[SPRITE_TEE_FOOT].m_Y * FeetGridPixelsHeight;
+
+		int FeetOutlineGridPixelsWidth = (m_Info.m_Width / g_pData->m_aSprites[SPRITE_TEE_FOOT_OUTLINE].m_pSet->m_Gridx);
+		int FeetOutlineGridPixelsHeight = (m_Info.m_Height / g_pData->m_aSprites[SPRITE_TEE_FOOT_OUTLINE].m_pSet->m_Gridy);
+		int FeetOutlineWidth = g_pData->m_aSprites[SPRITE_TEE_FOOT_OUTLINE].m_W * FeetOutlineGridPixelsWidth;
+		int FeetOutlineHeight = g_pData->m_aSprites[SPRITE_TEE_FOOT_OUTLINE].m_H * FeetOutlineGridPixelsHeight;
+
+		int FeetOutlineOffsetX = g_pData->m_aSprites[SPRITE_TEE_FOOT_OUTLINE].m_X * FeetOutlineGridPixelsWidth;
+		int FeetOutlineOffsetY = g_pData->m_aSprites[SPRITE_TEE_FOOT_OUTLINE].m_Y * FeetOutlineGridPixelsHeight;
+
+		int BodyOutlineGridPixelsWidth = (m_Info.m_Width / g_pData->m_aSprites[SPRITE_TEE_BODY_OUTLINE].m_pSet->m_Gridx);
+		int BodyOutlineGridPixelsHeight = (m_Info.m_Height / g_pData->m_aSprites[SPRITE_TEE_BODY_OUTLINE].m_pSet->m_Gridy);
+		int BodyOutlineWidth = g_pData->m_aSprites[SPRITE_TEE_BODY_OUTLINE].m_W * BodyOutlineGridPixelsWidth;
+		int BodyOutlineHeight = g_pData->m_aSprites[SPRITE_TEE_BODY_OUTLINE].m_H * BodyOutlineGridPixelsHeight;
+
+		int BodyOutlineOffsetX = g_pData->m_aSprites[SPRITE_TEE_BODY_OUTLINE].m_X * BodyOutlineGridPixelsWidth;
+		int BodyOutlineOffsetY = g_pData->m_aSprites[SPRITE_TEE_BODY_OUTLINE].m_Y * BodyOutlineGridPixelsHeight;
+
+		int BodyWidth = g_pData->m_aSprites[SPRITE_TEE_BODY].m_W * (m_Info.m_Width / g_pData->m_aSprites[SPRITE_TEE_BODY].m_pSet->m_Gridx); // body width
+		int BodyHeight = g_pData->m_aSprites[SPRITE_TEE_BODY].m_H * (m_Info.m_Height / g_pData->m_aSprites[SPRITE_TEE_BODY].m_pSet->m_Gridy); // body height
+		if(BodyWidth > m_Info.m_Width || BodyHeight > m_Info.m_Height)
+			return 0;
+		unsigned char *d = (unsigned char *)m_Info.m_pData;
+		const int PixelStep = 4;
+		int Pitch = m_Info.m_Width * PixelStep;
+		dbg_msg("st", "asdf4");
+
+		// dig out blood color
+		{
+			int aColors[3] = {0};
+			for(int y = 0; y < BodyHeight; y++)
+				for(int x = 0; x < BodyWidth; x++)
+				{
+					uint8_t AlphaValue = d[y * Pitch + x * PixelStep + 3];
+					if(AlphaValue > 128)
+					{
+						aColors[0] += d[y * Pitch + x * PixelStep + 0];
+						aColors[1] += d[y * Pitch + x * PixelStep + 1];
+						aColors[2] += d[y * Pitch + x * PixelStep + 2];
+					}
+				}
+			if(aColors[0] != 0 && aColors[1] != 0 && aColors[2] != 0)
+				Skin.m_BloodColor = ColorRGBA(normalize(vec3(aColors[0], aColors[1], aColors[2])));
+			else
+				Skin.m_BloodColor = ColorRGBA(0, 0, 0, 1);
+		}
+		dbg_msg("st", "asdf6");
+
+		CheckMetrics(Skin.m_Metrics.m_Body, d, Pitch, 0, 0, BodyWidth, BodyHeight);
+		dbg_msg("st", "asdf7");
+
+		// body outline metrics
+		CheckMetrics(Skin.m_Metrics.m_Body, d, Pitch, BodyOutlineOffsetX, BodyOutlineOffsetY, BodyOutlineWidth, BodyOutlineHeight);
+		dbg_msg("st", "asdf8");
+
+		// get feet size
+		CheckMetrics(Skin.m_Metrics.m_Feet, d, Pitch, FeetOffsetX, FeetOffsetY, FeetWidth, FeetHeight);
+		dbg_msg("st", "asdf9");
+
+		// get feet outline size
+		CheckMetrics(Skin.m_Metrics.m_Feet, d, Pitch, FeetOutlineOffsetX, FeetOutlineOffsetY, FeetOutlineWidth, FeetOutlineHeight);
+		dbg_msg("st", "asdf10");
+
+		// make the texture gray scale
+		for(int i = 0; i < m_Info.m_Width * m_Info.m_Height; i++)
+		{
+			int v = (d[i * PixelStep] + d[i * PixelStep + 1] + d[i * PixelStep + 2]) / 3;
+			d[i * PixelStep] = v;
+			d[i * PixelStep + 1] = v;
+			d[i * PixelStep + 2] = v;
+		}
+
+		int Freq[256] = {0};
+		int OrgWeight = 0;
+		int NewWeight = 192;
+
+		// find most common frequence
+		for(int y = 0; y < BodyHeight; y++)
+			for(int x = 0; x < BodyWidth; x++)
+			{
+				if(d[y * Pitch + x * PixelStep + 3] > 128)
+					Freq[d[y * Pitch + x * PixelStep]]++;
+			}
+
+		for(int i = 1; i < 256; i++)
+		{
+			if(Freq[OrgWeight] < Freq[i])
+				OrgWeight = i;
+		}
+
+		// reorder
+		int InvOrgWeight = 255 - OrgWeight;
+		int InvNewWeight = 255 - NewWeight;
+		for(int y = 0; y < BodyHeight; y++)
+			for(int x = 0; x < BodyWidth; x++)
+			{
+				int v = d[y * Pitch + x * PixelStep];
+				if(v <= OrgWeight && OrgWeight == 0)
+					v = 0;
+				else if(v <= OrgWeight)
+					v = (int)(((v / (float)OrgWeight) * NewWeight));
+				else if(InvOrgWeight == 0)
+					v = NewWeight;
+				else
+					v = (int)(((v - OrgWeight) / (float)InvOrgWeight) * InvNewWeight + NewWeight);
+				d[y * Pitch + x * PixelStep] = v;
+				d[y * Pitch + x * PixelStep + 1] = v;
+				d[y * Pitch + x * PixelStep + 2] = v;
+			}
+		dbg_msg("st", "asdf11");
+		Skin.m_ColorableSkin.m_Body = graphics->LoadSpriteTexture(m_Info, &g_pData->m_aSprites[SPRITE_TEE_BODY]);
+
+		Skin.m_ColorableSkin.m_BodyOutline = graphics->LoadSpriteTexture(m_Info, &g_pData->m_aSprites[SPRITE_TEE_BODY_OUTLINE]);
+
+		Skin.m_ColorableSkin.m_Feet = graphics->LoadSpriteTexture(m_Info, &g_pData->m_aSprites[SPRITE_TEE_FOOT]);
+
+		Skin.m_ColorableSkin.m_FeetOutline = graphics->LoadSpriteTexture(m_Info, &g_pData->m_aSprites[SPRITE_TEE_FOOT_OUTLINE]);
+
+		Skin.m_ColorableSkin.m_Hands = graphics->LoadSpriteTexture(m_Info, &g_pData->m_aSprites[SPRITE_TEE_HAND]);
+
+		Skin.m_ColorableSkin.m_HandsOutline = graphics->LoadSpriteTexture(m_Info, &g_pData->m_aSprites[SPRITE_TEE_HAND_OUTLINE]);
+		dbg_msg("st", "asdf12");
+
+		for (int i = 0; i < 6; ++i) {
+
+			Skin.m_ColorableSkin.m_Eyes[i] = graphics->LoadSpriteTexture(m_Info, &g_pData->m_aSprites[SPRITE_TEE_EYE_NORMAL + i]);
+		}
+			
+		dbg_msg("st", "asdf13");
+
+		graphics->FreePNG(&m_Info);
+		dbg_msg("st", "asdf14");
+		std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+
+		// set skin data
+		str_copy(Skin.m_aName, m_aName, sizeof(Skin.m_aName));
+
+		dbg_msg("st", "asdf15");
+	
+
+		m_Skin = Skin;
+	}
 	return State;
 }
 
-CSkins::CGetPngFile::CGetPngFile(CSkins *pSkins, const char *pUrl, IStorage *pStorage, const char *pDest) :
-	CHttpRequest(pUrl),
-	m_pSkins(pSkins)
+CSkin CSkins::CGetPngFile::Skin()
 {
+	return m_Skin;
+}
+
+CSkins::CGetPngFile::CGetPngFile(CSkins *pSkins, const char *pUrl, IStorage *pStorage, const char *pDest, const char *aName, const char *aPath) :
+	CHttpRequest(pUrl),
+	m_pSkins(pSkins),
+	m_aName(aName),
+	m_aPath(aPath)
+{
+	dbg_msg("st", "test1");
+
 	WriteToFile(pStorage, pDest, IStorage::TYPE_SAVE);
+	dbg_msg("st", "test2");
+
 	Timeout(CTimeout{0, 0, 0, 0});
 	LogProgress(HTTPLOG::NONE);
+	char aPath2[IO_MAX_PATH_LENGTH];
+	str_format(aPath2, sizeof(aPath2), "downloadedskins/%s.png", aName);
+	pStorage->RenameFile(aPath, aPath2, IStorage::TYPE_SAVE);
 }
 
 struct SSkinScanUser
@@ -80,7 +282,7 @@ int CSkins::SkinScan(const char *pName, int IsDir, int DirType, void *pUser)
 	return SkinID;
 }
 
-static void CheckMetrics(CSkin::SSkinMetricVariable &Metrics, uint8_t *pImg, int ImgWidth, int ImgX, int ImgY, int CheckWidth, int CheckHeight)
+void CSkins::CheckMetrics(CSkin::SSkinMetricVariable &Metrics, uint8_t *pImg, int ImgWidth, int ImgX, int ImgY, int CheckWidth, int CheckHeight)
 {
 	int MaxY = -1;
 	int MinY = CheckHeight + 1;
@@ -115,6 +317,7 @@ static void CheckMetrics(CSkin::SSkinMetricVariable &Metrics, uint8_t *pImg, int
 	Metrics.m_MaxHeight = CheckHeight;
 }
 
+
 int CSkins::LoadSkin(const char *pName, const char *pPath, int DirType)
 {
 	CImageInfo Info;
@@ -126,12 +329,14 @@ int CSkins::LoadSkin(const char *pName, const char *pPath, int DirType)
 bool CSkins::LoadSkinPNG(CImageInfo &Info, const char *pName, const char *pPath, int DirType)
 {
 	char aBuf[512];
-	if(!Graphics()->LoadPNG(&Info, pPath, DirType))
-	{
-		str_format(aBuf, sizeof(aBuf), "failed to load skin from %s", pName);
-		Console()->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "game", aBuf);
-		return false;
-	}
+
+		if(!Graphics()->LoadPNG(&Info, pPath, DirType))
+		{
+			str_format(aBuf, sizeof(aBuf), "failed to load skin from %s", pName);
+			Console()->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "game", aBuf);
+			return false;
+		}
+	
 	return true;
 }
 
@@ -163,7 +368,7 @@ int CSkins::LoadSkin(const char *pName, CImageInfo &Info)
 
 	for(int i = 0; i < 6; ++i)
 		Skin.m_OriginalSkin.m_Eyes[i] = Graphics()->LoadSpriteTexture(Info, &g_pData->m_aSprites[SPRITE_TEE_EYE_NORMAL + i]);
-
+	
 	int FeetGridPixelsWidth = (Info.m_Width / g_pData->m_aSprites[SPRITE_TEE_FOOT].m_pSet->m_Gridx);
 	int FeetGridPixelsHeight = (Info.m_Height / g_pData->m_aSprites[SPRITE_TEE_FOOT].m_pSet->m_Gridy);
 	int FeetWidth = g_pData->m_aSprites[SPRITE_TEE_FOOT].m_W * FeetGridPixelsWidth;
@@ -228,7 +433,7 @@ int CSkins::LoadSkin(const char *pName, CImageInfo &Info)
 	CheckMetrics(Skin.m_Metrics.m_Feet, d, Pitch, FeetOutlineOffsetX, FeetOutlineOffsetY, FeetOutlineWidth, FeetOutlineHeight);
 
 	// make the texture gray scale
-	for(int i = 0; i < Info.m_Width * Info.m_Height; i++)
+	 for(int i = 0; i < Info.m_Width * Info.m_Height; i++)
 	{
 		int v = (d[i * PixelStep] + d[i * PixelStep + 1] + d[i * PixelStep + 2]) / 3;
 		d[i * PixelStep] = v;
@@ -273,17 +478,17 @@ int CSkins::LoadSkin(const char *pName, CImageInfo &Info)
 			d[y * Pitch + x * PixelStep + 1] = v;
 			d[y * Pitch + x * PixelStep + 2] = v;
 		}
-
+	
 	Skin.m_ColorableSkin.m_Body = Graphics()->LoadSpriteTexture(Info, &g_pData->m_aSprites[SPRITE_TEE_BODY]);
 	Skin.m_ColorableSkin.m_BodyOutline = Graphics()->LoadSpriteTexture(Info, &g_pData->m_aSprites[SPRITE_TEE_BODY_OUTLINE]);
 	Skin.m_ColorableSkin.m_Feet = Graphics()->LoadSpriteTexture(Info, &g_pData->m_aSprites[SPRITE_TEE_FOOT]);
 	Skin.m_ColorableSkin.m_FeetOutline = Graphics()->LoadSpriteTexture(Info, &g_pData->m_aSprites[SPRITE_TEE_FOOT_OUTLINE]);
 	Skin.m_ColorableSkin.m_Hands = Graphics()->LoadSpriteTexture(Info, &g_pData->m_aSprites[SPRITE_TEE_HAND]);
 	Skin.m_ColorableSkin.m_HandsOutline = Graphics()->LoadSpriteTexture(Info, &g_pData->m_aSprites[SPRITE_TEE_HAND_OUTLINE]);
-
-	for(int i = 0; i < 6; ++i)
+	
+	 for(int i = 0; i < 6; ++i)
 		Skin.m_ColorableSkin.m_Eyes[i] = Graphics()->LoadSpriteTexture(Info, &g_pData->m_aSprites[SPRITE_TEE_EYE_NORMAL + i]);
-
+	
 	Graphics()->FreePNG(&Info);
 
 	// set skin data
@@ -426,10 +631,13 @@ int CSkins::FindImpl(const char *pName)
 	{
 		if(RangeBegin->m_pTask && RangeBegin->m_pTask->State() == HTTP_DONE)
 		{
-			char aPath[IO_MAX_PATH_LENGTH];
-			str_format(aPath, sizeof(aPath), "downloadedskins/%s.png", RangeBegin->m_aName);
-			Storage()->RenameFile(RangeBegin->m_aPath, aPath, IStorage::TYPE_SAVE);
-			LoadSkin(RangeBegin->m_aName, RangeBegin->m_pTask->m_Info);
+
+			/* Storage()->RenameFile(RangeBegin->m_aPath, aPath, IStorage::TYPE_SAVE);*/
+			dbg_msg("st", "max1");
+			//m_vSkins.insert(std::lower_bound(m_vSkins.begin(), m_vSkins.end(), RangeBegin->m_pTask->Skin()), RangeBegin->m_pTask->Skin());
+			dbg_msg("st", "max2");
+
+
 			RangeBegin->m_pTask = nullptr;
 		}
 		if(RangeBegin->m_pTask && (RangeBegin->m_pTask->State() == HTTP_ERROR || RangeBegin->m_pTask->State() == HTTP_ABORTED))
@@ -440,7 +648,7 @@ int CSkins::FindImpl(const char *pName)
 				char aUrlSkinsTw[IO_MAX_PATH_LENGTH];
 				EscapeUrl(aEscapedName, sizeof(aEscapedName), pName);
 				str_format(aUrlSkinsTw, sizeof(aUrlSkinsTw), "%s%s.png", g_Config.m_ClSkinSkinsTwDownloadUrl, aEscapedName);
-				RangeBegin->m_pTask = std::make_shared<CGetPngFile>(this, aUrlSkinsTw, Storage(), RangeBegin->m_aPath);
+				RangeBegin->m_pTask = std::make_shared<CGetPngFile>(this, aUrlSkinsTw, Storage(), RangeBegin->m_aPath, RangeBegin->m_aName, RangeBegin->m_aPath);
 				m_pClient->Engine()->AddJob(RangeBegin->m_pTask);
 			}
 			else
@@ -450,7 +658,7 @@ int CSkins::FindImpl(const char *pName)
 		}
 		return -1;
 	}
-
+	dbg_msg("st", "max3");
 	CDownloadSkin Skin;
 	str_copy(Skin.m_aName, pName, sizeof(Skin.m_aName));
 
@@ -459,7 +667,7 @@ int CSkins::FindImpl(const char *pName)
 	str_format(aUrl, sizeof(aUrl), "%s%s.png", g_Config.m_ClDownloadCommunitySkins != 0 ? g_Config.m_ClSkinCommunityDownloadUrl : g_Config.m_ClSkinDownloadUrl, aEscapedName);
 	char aBuf[IO_MAX_PATH_LENGTH];
 	str_format(Skin.m_aPath, sizeof(Skin.m_aPath), "downloadedskins/%s", IStorage::FormatTmpPath(aBuf, sizeof(aBuf), pName));
-	Skin.m_pTask = std::make_shared<CGetPngFile>(this, aUrl, Storage(), Skin.m_aPath);
+	Skin.m_pTask = std::make_shared<CGetPngFile>(this, aUrl, Storage(), Skin.m_aPath, pName, Skin.m_aPath);
 	m_pClient->Engine()->AddJob(Skin.m_pTask);
 	m_vDownloadSkins.insert(std::lower_bound(m_vDownloadSkins.begin(), m_vDownloadSkins.end(), Skin), Skin);
 	return -1;

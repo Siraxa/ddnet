@@ -1,6 +1,5 @@
 /* (c) Magnus Auvinen. See licence.txt in the root of the distribution for more information. */
 /* If you are missing that file, acquire a complete release at teeworlds.com.                */
-
 #include <base/detect.h>
 #include <base/math.h>
 #include <base/tl/threading.h>
@@ -28,7 +27,6 @@
 #endif
 
 #include "graphics_threaded.h"
-
 static CVideoMode g_aFakeModes[] = {
 	{8192, 4320, 8192, 4320, 0, 8, 8, 8, 0}, {7680, 4320, 7680, 4320, 0, 8, 8, 8, 0}, {5120, 2880, 5120, 2880, 0, 8, 8, 8, 0},
 	{4096, 2160, 4096, 2160, 0, 8, 8, 8, 0}, {3840, 2160, 3840, 2160, 0, 8, 8, 8, 0}, {2560, 1440, 2560, 1440, 0, 8, 8, 8, 0},
@@ -505,6 +503,7 @@ IGraphics::CTextureHandle CGraphics_Threaded::LoadTextureRaw(int Width, int Heig
 // simple uncompressed RGBA loaders
 IGraphics::CTextureHandle CGraphics_Threaded::LoadTexture(const char *pFilename, int StorageType, int StoreFormat, int Flags)
 {
+
 	int l = str_length(pFilename);
 	IGraphics::CTextureHandle ID;
 	CImageInfo Img;
@@ -522,7 +521,7 @@ IGraphics::CTextureHandle CGraphics_Threaded::LoadTexture(const char *pFilename,
 			dbg_msg("graphics/texture", "loaded %s", pFilename);
 		return ID;
 	}
-
+	
 	return m_InvalidTexture;
 }
 
@@ -626,7 +625,7 @@ bool CGraphics_Threaded::UpdateTextTexture(CTextureHandle TextureID, int x, int 
 int CGraphics_Threaded::LoadPNG(CImageInfo *pImg, const char *pFilename, int StorageType)
 {
 	char aCompleteFilename[IO_MAX_PATH_LENGTH];
-
+	dbg_msg("teeeeest", "test1");
 	// open file for reading
 	IOHANDLE File = m_pStorage->OpenFile(pFilename, IOFLAG_READ, StorageType, aCompleteFilename, sizeof(aCompleteFilename));
 	if(!File)
@@ -634,6 +633,7 @@ int CGraphics_Threaded::LoadPNG(CImageInfo *pImg, const char *pFilename, int Sto
 		dbg_msg("game/png", "failed to open file. filename='%s'", pFilename);
 		return 0;
 	}
+	dbg_msg("teeeeest", "test2");
 
 	png_t Png;
 	int Error = png_open_read(&Png, 0, File);
@@ -643,6 +643,7 @@ int CGraphics_Threaded::LoadPNG(CImageInfo *pImg, const char *pFilename, int Sto
 		io_close(File);
 		return 0;
 	}
+	dbg_msg("teeeeest", "test3");
 
 	if(Png.depth != 8 || (Png.color_type != PNG_TRUECOLOR && Png.color_type != PNG_TRUECOLOR_ALPHA))
 	{
@@ -650,6 +651,7 @@ int CGraphics_Threaded::LoadPNG(CImageInfo *pImg, const char *pFilename, int Sto
 		io_close(File);
 		return 0;
 	}
+	dbg_msg("teeeeest", "test4");
 
 	unsigned char *pBuffer = (unsigned char *)malloc((size_t)Png.width * Png.height * Png.bpp);
 	Error = png_get_data(&Png, pBuffer);
@@ -662,6 +664,9 @@ int CGraphics_Threaded::LoadPNG(CImageInfo *pImg, const char *pFilename, int Sto
 	}
 	io_close(File);
 
+
+	dbg_msg("teeeeest", "test6");
+
 	pImg->m_Width = Png.width;
 	pImg->m_Height = Png.height;
 	if(Png.color_type == PNG_TRUECOLOR)
@@ -673,7 +678,9 @@ int CGraphics_Threaded::LoadPNG(CImageInfo *pImg, const char *pFilename, int Sto
 		free(pBuffer);
 		return 0;
 	}
+	dbg_msg("teeeeest", "test7");
 	pImg->m_pData = pBuffer;
+	dbg_msg("teeeeest", "test8");
 	return 1;
 }
 

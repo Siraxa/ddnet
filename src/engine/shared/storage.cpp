@@ -355,6 +355,7 @@ public:
 
 	IOHANDLE OpenFile(const char *pFilename, int Flags, int Type, char *pBuffer = 0, int BufferSize = 0) override
 	{
+		dbg_msg("teeeeest", "test70");
 		char aBuffer[IO_MAX_PATH_LENGTH];
 		if(!pBuffer)
 		{
@@ -406,20 +407,25 @@ public:
 		}
 
 		pBuffer[0] = 0;
+		dbg_msg("teeeeest", "test71");
 		return 0;
 	}
 
 	bool ReadFile(const char *pFilename, int Type, void **ppResult, unsigned *pResultLen) override
 	{
+		dbg_msg("teeeeest", "test72");
+
 		IOHANDLE File = OpenFile(pFilename, IOFLAG_READ, Type);
 		if(!File)
 		{
 			*ppResult = nullptr;
 			*pResultLen = 0;
+			dbg_msg("teeeeest", "test73");
 			return false;
 		}
 		io_read_all(File, ppResult, pResultLen);
 		io_close(File);
+		dbg_msg("teeeeest", "test74");
 		return true;
 	}
 
@@ -529,6 +535,7 @@ public:
 
 	bool RenameFile(const char *pOldFilename, const char *pNewFilename, int Type) override
 	{
+		dbg_msg("teeeeest", "test78");
 		if(Type < 0 || Type >= m_NumPaths)
 			return false;
 
@@ -540,6 +547,7 @@ public:
 		bool Success = !fs_rename(aOldBuffer, aNewBuffer);
 		if(!Success)
 			dbg_msg("storage", "failed to rename: %s -> %s", aOldBuffer, aNewBuffer);
+		dbg_msg("teeeeest", "test79");
 		return Success;
 	}
 

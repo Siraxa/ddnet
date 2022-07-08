@@ -711,9 +711,6 @@ if(NOT(GTEST_FOUND))
   endif()
 endif()
 
-if(CLIENT AND VULKAN AND NOT(VULKAN_FOUND))
-  message(SEND_ERROR "You must install Vulkan libraries to compile the ${CMAKE_PROJECT_NAME} client")
-endif()
 
 if(TARGET_OS STREQUAL "windows")
   set(PLATFORM_CLIENT)

@@ -21,9 +21,7 @@ if(NOT GLSLANG_VALIDATOR_PROGRAM)
     endif()
   endif()
 
-  if(NOT GLSLANG_VALIDATOR_PROGRAM_FOUND)
-    message(FATAL_ERROR "glslangValidator binary was not found. Did you install the Vulkan SDK / packages ?")
-  endif()
+
 endif()
 
 set(SPIRV_OPTIMIZER_PROGRAM_FOUND TRUE)

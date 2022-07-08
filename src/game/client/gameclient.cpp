@@ -2640,8 +2640,12 @@ bool CGameClient::IsLocalCharSuper()
 
 void CGameClient::LoadGameSkin(const char *pPath, bool AsDir)
 {
+	dbg_msg("teeeeest", "ax5");
+
 	if(m_GameSkinLoaded)
 	{
+		dbg_msg("teeeeest", "ax6");
+
 		Graphics()->UnloadTexture(&m_GameSkin.m_SpriteHealthFull);
 		Graphics()->UnloadTexture(&m_GameSkin.m_SpriteHealthEmpty);
 		Graphics()->UnloadTexture(&m_GameSkin.m_SpriteArmorFull);
@@ -2658,6 +2662,8 @@ void CGameClient::LoadGameSkin(const char *pPath, bool AsDir)
 		{
 			SpriteWeaponCursor = IGraphics::CTextureHandle();
 		}
+		dbg_msg("teeeeest", "ax7");
+
 
 		Graphics()->UnloadTexture(&m_GameSkin.m_SpriteHookChain);
 		Graphics()->UnloadTexture(&m_GameSkin.m_SpriteHookHead);
@@ -2682,6 +2688,7 @@ void CGameClient::LoadGameSkin(const char *pPath, bool AsDir)
 		{
 			Graphics()->UnloadTexture(&SpriteStar);
 		}
+		dbg_msg("teeeeest", "ax8");
 
 		Graphics()->UnloadTexture(&m_GameSkin.m_SpriteWeaponGunProjectile);
 		Graphics()->UnloadTexture(&m_GameSkin.m_SpriteWeaponShotgunProjectile);
@@ -2706,6 +2713,7 @@ void CGameClient::LoadGameSkin(const char *pPath, bool AsDir)
 				SpriteWeaponsMuzzle[i] = IGraphics::CTextureHandle();
 			}
 		}
+		dbg_msg("teeeeest", "ax9");
 
 		Graphics()->UnloadTexture(&m_GameSkin.m_SpritePickupHealth);
 		Graphics()->UnloadTexture(&m_GameSkin.m_SpritePickupArmor);
@@ -2743,6 +2751,7 @@ void CGameClient::LoadGameSkin(const char *pPath, bool AsDir)
 
 		m_GameSkinLoaded = false;
 	}
+	dbg_msg("teeeeest", "ax10");
 
 	char aPath[IO_MAX_PATH_LENGTH];
 	bool IsDefault = false;
@@ -2758,6 +2767,7 @@ void CGameClient::LoadGameSkin(const char *pPath, bool AsDir)
 		else
 			str_format(aPath, sizeof(aPath), "assets/game/%s.png", pPath);
 	}
+	dbg_msg("teeeeest", "ax11");
 
 	CImageInfo ImgInfo;
 	bool PngLoaded = Graphics()->LoadPNG(&ImgInfo, aPath, IStorage::TYPE_ALL);
@@ -2767,6 +2777,7 @@ void CGameClient::LoadGameSkin(const char *pPath, bool AsDir)
 			LoadGameSkin("default");
 		else
 			LoadGameSkin(pPath, true);
+		dbg_msg("teeeeest", "ax12");
 	}
 	else if(PngLoaded && Graphics()->CheckImageDivisibility(aPath, ImgInfo, g_pData->m_aSprites[SPRITE_HEALTH_FULL].m_pSet->m_Gridx, g_pData->m_aSprites[SPRITE_HEALTH_FULL].m_pSet->m_Gridy, true) && Graphics()->IsImageFormatRGBA(aPath, ImgInfo))
 	{
@@ -2891,6 +2902,7 @@ void CGameClient::LoadGameSkin(const char *pPath, bool AsDir)
 		}
 
 		m_GameSkinLoaded = true;
+		dbg_msg("teeeeest", "ax13");
 
 		Graphics()->FreePNG(&ImgInfo);
 	}

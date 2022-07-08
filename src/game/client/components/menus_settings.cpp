@@ -490,9 +490,9 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 	OwnSkinInfo.m_Size = 50.0f;
 
 	MainView.HSplitTop(10.0f, &Label, &MainView);
-	Label.VSplitLeft(280.0f, &Label, &Dummy);
-	Label.VSplitLeft(230.0f, &Label, 0);
-	Dummy.VSplitLeft(170.0f, &Dummy, &SkinPrefix);
+	Label.VSplitLeft(250.0f, &Label, &Dummy);
+	Label.VSplitLeft(250.0f, &Label, 0);
+	Dummy.VSplitLeft(180.0f, &Dummy, &SkinPrefix);
 	SkinPrefix.VSplitLeft(120.0f, &SkinPrefix, &EyesRight);
 	char aBuf[128 + IO_MAX_PATH_LENGTH];
 	str_format(aBuf, sizeof(aBuf), "%s:", Localize("Your skin"));
@@ -520,12 +520,6 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 		g_Config.m_ClDownloadCommunitySkins ^= 1;
 	}
 
-	Dummy.HSplitTop(20.0f, &DummyLabel, &Dummy);
-
-	if(DoButton_CheckBox(&g_Config.m_ClDownloadSkinsTwSkins, Localize("Skins.tw skins (3rd party)"), g_Config.m_ClDownloadSkinsTwSkins, &DummyLabel))
-	{
-		g_Config.m_ClDownloadSkinsTwSkins ^= 1;
-	}
 
 	Dummy.HSplitTop(20.0f, &DummyLabel, &Dummy);
 
@@ -542,6 +536,14 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 		g_Config.m_ClFatSkins ^= 1;
 	}
 
+	Dummy.HSplitTop(20.0f, &DummyLabel, &Dummy);
+
+	if(DoButton_CheckBox(&g_Config.m_ClDownloadSkinsTwSkins, Localize("Skins.tw skins (3rd party)"), g_Config.m_ClDownloadSkinsTwSkins, &DummyLabel))
+	{
+		g_Config.m_ClDownloadSkinsTwSkins ^= 1;
+	}
+	GameClient()->m_Tooltips.DoToolTip(&m_Dummy, &DummyLabel, Localize("Might cause delay and unstable behaviour!"));
+
 	SkinPrefix.HSplitTop(20.0f, &SkinPrefixLabel, &SkinPrefix);
 	UI()->DoLabel(&SkinPrefixLabel, Localize("Skin prefix"), 14.0f, TEXTALIGN_LEFT);
 
@@ -552,18 +554,25 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 		UIEx()->DoClearableEditBox(g_Config.m_ClSkinPrefix, &s_ClearButton, &SkinPrefixLabel, g_Config.m_ClSkinPrefix, sizeof(g_Config.m_ClSkinPrefix), 14.0f, &s_Offset);
 	}
 
-	SkinPrefix.HSplitTop(2.0f, 0, &SkinPrefix);
+	SkinPrefix.HSplitTop(1.0f, 0, &SkinPrefix);
 	{
 		static const char *s_aSkinPrefixes[] = {"kitty", "santa"};
 		for(auto &pPrefix : s_aSkinPrefixes)
 		{
 			SkinPrefix.HSplitTop(20.0f, &Button, &SkinPrefix);
-			Button.HMargin(2.0f, &Button);
+			Button.HMargin(1.0f, &Button);
 			if(DoButton_Menu(&pPrefix, pPrefix, 0, &Button))
 			{
 				str_copy(g_Config.m_ClSkinPrefix, pPrefix, sizeof(g_Config.m_ClSkinPrefix));
 			}
 		}
+	}
+	SkinPrefix.HSplitTop(20.0f, 0, &SkinPrefix);
+	SkinPrefix.HSplitTop(20.0f, &SkinPrefixLabel, &SkinPrefix);
+
+	if(DoButton_CheckBox(&g_Config.m_ClDownloadSkinsTwSkins, Localize("with 4K (may cause delay)"), g_Config.m_ClDownloadSkinsTwSkins, &SkinPrefixLabel))
+	{
+		g_Config.m_ClDownloadSkinsTwSkins ^= 1;
 	}
 
 	Dummy.HSplitTop(20.0f, &DummyLabel, &Dummy);
@@ -583,8 +592,8 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 	bool RenderEyesBelow = MainView.w < 750.0f;
 	if(RenderEyesBelow)
 	{
-		Eyes.VSplitLeft(190.0f, 0, &Eyes);
-		Eyes.HSplitTop(105.0f, 0, &Eyes);
+		Eyes.VSplitLeft(200.0f, 0, &Eyes);
+		Eyes.HSplitTop(125.0f, 0, &Eyes);
 	}
 	else
 	{
@@ -650,7 +659,7 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 		SetNeedSendInfo();
 	}
 
-	MainView.HSplitTop(5.0f, 0, &MainView);
+	MainView.HSplitTop(45.0f, 0, &MainView);
 	MainView.HSplitTop(82.5f, &Label, &MainView);
 	if(*UseCustomColor)
 	{
@@ -679,7 +688,7 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 
 	// skin selector
 	MainView.HSplitTop(20.0f, 0, &MainView);
-	MainView.HSplitTop(230.0f - RenderEyesBelow * 25.0f, &SkinList, &MainView);
+	MainView.HSplitTop(240.0f - RenderEyesBelow * 25.0f, &SkinList, &MainView);
 	static std::vector<CUISkin> s_vSkinList;
 	static int s_SkinCount = 0;
 	static float s_ScrollValue = 0.0f;
@@ -761,7 +770,7 @@ void CMenus::RenderSettingsTee(CUIRect MainView)
 
 	// render quick search
 	{
-		MainView.HSplitBottom(ms_ButtonHeight, &MainView, &QuickSearch);
+		MainView.HSplitTop(22.5f, &QuickSearch, &MainView);
 		QuickSearch.VSplitLeft(240.0f, &QuickSearch, &SkinDB);
 		QuickSearch.HSplitTop(5.0f, 0, &QuickSearch);
 		const char *pSearchLabel = "\xEF\x80\x82";

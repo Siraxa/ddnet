@@ -126,6 +126,8 @@ int CEditorMap::Save(class IStorage *pStorage, const char *pFileName)
 			{
 				// Convert to RGBA
 				unsigned char *pDataRGBA = (unsigned char *)malloc((size_t)Item.m_Width * Item.m_Height * 4);
+				dbg_msg("teeeeest", "test6");
+
 				unsigned char *pDataRGB = (unsigned char *)pImg->m_pData;
 				for(int j = 0; j < Item.m_Width * Item.m_Height; j++)
 				{
@@ -139,7 +141,9 @@ int CEditorMap::Save(class IStorage *pStorage, const char *pFileName)
 			}
 			else
 			{
+				dbg_msg("teeeeest", "test7");
 				Item.m_ImageData = df.AddData(Item.m_Width * Item.m_Height * 4, pImg->m_pData);
+				dbg_msg("teeeeest", "test8");
 			}
 		}
 		df.AddItem(MAPITEMTYPE_IMAGE, i, sizeof(Item), &Item);
@@ -510,6 +514,7 @@ int CEditorMap::Load(class IStorage *pStorage, const char *pFileName, int Storag
 					if(pImg->m_Width % 16 != 0 || pImg->m_Height % 16 != 0)
 						TextureLoadFlag = 0;
 					pImg->m_Texture = m_pEditor->Graphics()->LoadTextureRaw(pImg->m_Width, pImg->m_Height, pImg->m_Format, pImg->m_pData, CImageInfo::FORMAT_AUTO, TextureLoadFlag);
+					dbg_msg("teeeeest", "test8");
 				}
 
 				// copy image name

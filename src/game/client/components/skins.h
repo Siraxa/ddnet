@@ -8,19 +8,24 @@
 #include <game/client/skin.h>
 #include <vector>
 
+
 class CSkins : public CComponent
 {
 public:
 	class CGetPngFile : public CHttpRequest
 	{
 		CSkins *m_pSkins;
+		const char *m_aName;
+		const char *m_aPath;
+		CSkin m_Skin;
 
 	protected:
 		virtual int OnCompletion(int State) override;
 
 	public:
-		CGetPngFile(CSkins *pSkins, const char *pUrl, IStorage *pStorage, const char *pDest);
+		CGetPngFile(CSkins *pSkins, const char *pUrl, IStorage *pStorage, const char *pDest, const char *m_aName, const char *m_aPath);
 		CImageInfo m_Info;
+		virtual CSkin Skin();
 	};
 
 	struct CDownloadSkin
@@ -55,5 +60,6 @@ private:
 	int LoadSkin(const char *pName, CImageInfo &Info);
 	int FindImpl(const char *pName);
 	static int SkinScan(const char *pName, int IsDir, int DirType, void *pUser);
+	static void CheckMetrics(CSkin::SSkinMetricVariable &Metrics, uint8_t *pImg, int ImgWidth, int ImgX, int ImgY, int CheckWidth, int CheckHeight);
 };
 #endif
