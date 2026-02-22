@@ -1,30 +1,34 @@
 /* (c) Magnus Auvinen. See licence.txt in the root of the distribution for more information. */
 /* If you are missing that file, acquire a complete release at teeworlds.com.                */
+#include "countryflags.h"
+#include "menus.h"
+#include "skins.h"
+
+#include <base/log.h>
 #include <base/math.h>
 #include <base/system.h>
 
+#include <engine/font_icons.h>
 #include <engine/graphics.h>
 #include <engine/shared/config.h>
-#include <engine/shared/linereader.h>
+#include <engine/shared/localization.h>
+#include <engine/shared/protocol7.h>
 #include <engine/storage.h>
 #include <engine/textrender.h>
 #include <engine/updater.h>
 
-#include <game/generated/protocol.h>
+#include <generated/protocol.h>
 
 #include <game/client/animstate.h>
 #include <game/client/components/chat.h>
 #include <game/client/components/menu_background.h>
 #include <game/client/components/sounds.h>
 #include <game/client/gameclient.h>
-#include <game/client/render.h>
+#include <game/client/skin.h>
 #include <game/client/ui.h>
+#include <game/client/ui_listbox.h>
+#include <game/client/ui_scrollregion.h>
 #include <game/localization.h>
-
-#include "binds.h"
-#include "countryflags.h"
-#include "menus.h"
-#include "skins.h"
 
 #include <array>
 #include <chrono>
@@ -35,57 +39,23 @@
 
 using namespace std::chrono_literals;
 
-CMenusKeyBinder CMenus::m_Binder;
-
-CMenusKeyBinder::CMenusKeyBinder()
-{
-	m_TakeKey = false;
-	m_GotKey = false;
-	m_ModifierCombination = 0;
-}
-
-bool CMenusKeyBinder::OnInput(IInput::CEvent Event)
-{
-	if(m_TakeKey)
-	{
-		int TriggeringEvent = (Event.m_Key == KEY_MOUSE_1) ? IInput::FLAG_PRESS : IInput::FLAG_RELEASE;
-		if(Event.m_Flags & TriggeringEvent)
-		{
-			m_Key = Event;
-			m_GotKey = true;
-			m_TakeKey = false;
-
-			m_ModifierCombination = CBinds::GetModifierMask(Input());
-			if(m_ModifierCombination == CBinds::GetModifierMaskOfKey(Event.m_Key))
-			{
-				m_ModifierCombination = 0;
-			}
-		}
-		return true;
-	}
-
-	return false;
-}
-
 void CMenus::RenderSettingsGeneral(CUIRect MainView)
 {
 	char aBuf[128 + IO_MAX_PATH_LENGTH];
-	CUIRect Label, Button, Left, Right, Game, Client;
-	MainView.HSplitTop(150.0f, &Game, &Client);
+	CUIRect Label, Button, Left, Right, Game, ClientSettings;
+	MainView.HSplitTop(150.0f, &Game, &ClientSettings);
 
 	// game
 	{
 		// headline
-		Game.HSplitTop(20.0f, &Label, &Game);
-		UI()->DoLabel(&Label, Localize("Game"), 20.0f, TEXTALIGN_LEFT);
-		Game.Margin(5.0f, &Game);
-		Game.VSplitMid(&Left, &Right);
-		Left.VSplitRight(5.0f, &Left, 0);
-		Right.VMargin(5.0f, &Right);
+		Game.HSplitTop(30.0f, &Label, &Game);
+		Ui()->DoLabel(&Label, Localize("Game"), 20.0f, TEXTALIGN_ML);
+		Game.HSplitTop(5.0f, nullptr, &Game);
+		Game.VSplitMid(&Left, nullptr, 20.0f);
 
 		// dynamic camera
 		Left.HSplitTop(20.0f, &Button, &Left);
-		bool IsDyncam = g_Config.m_ClDyncam || g_Config.m_ClMouseFollowfactor > 0;
+		const bool IsDyncam = g_Config.m_ClDyncam || g_Config.m_ClMouseFollowfactor > 0;
 		if(DoButton_CheckBox(&g_Config.m_ClDyncam, Localize("Dynamic Camera"), IsDyncam, &Button))
 		{
 			if(IsDyncam)
@@ -100,7 +70,7 @@ void CMenus::RenderSettingsGeneral(CUIRect MainView)
 		}
 
 		// smooth dynamic camera
-		Left.HSplitTop(5.0f, 0, &Left);
+		Left.HSplitTop(5.0f, nullptr, &Left);
 		Left.HSplitTop(20.0f, &Button, &Left);
 		if(g_Config.m_ClDyncam)
 		{
@@ -119,215 +89,137 @@ void CMenus::RenderSettingsGeneral(CUIRect MainView)
 		}
 
 		// weapon pickup
-		Left.HSplitTop(5.0f, 0, &Left);
+		Left.HSplitTop(5.0f, nullptr, &Left);
 		Left.HSplitTop(20.0f, &Button, &Left);
 		if(DoButton_CheckBox(&g_Config.m_ClAutoswitchWeapons, Localize("Switch weapon on pickup"), g_Config.m_ClAutoswitchWeapons, &Button))
 			g_Config.m_ClAutoswitchWeapons ^= 1;
 
 		// weapon out of ammo autoswitch
-		Left.HSplitTop(5.0f, 0, &Left);
+		Left.HSplitTop(5.0f, nullptr, &Left);
 		Left.HSplitTop(20.0f, &Button, &Left);
 		if(DoButton_CheckBox(&g_Config.m_ClAutoswitchWeaponsOutOfAmmo, Localize("Switch weapon when out of ammo"), g_Config.m_ClAutoswitchWeaponsOutOfAmmo, &Button))
 			g_Config.m_ClAutoswitchWeaponsOutOfAmmo ^= 1;
-
-		// chat messages
-		Right.HSplitTop(5.0f, 0, &Right);
-		Right.HSplitTop(20.0f, &Button, &Right);
-		if(DoButton_CheckBox(&g_Config.m_ClShowChatFriends, Localize("Show only chat messages from friends"), g_Config.m_ClShowChatFriends, &Button))
-			g_Config.m_ClShowChatFriends ^= 1;
-
-		// name plates
-		Right.HSplitTop(5.0f, 0, &Right);
-		Right.HSplitTop(20.0f, &Button, &Right);
-		if(DoButton_CheckBox(&g_Config.m_ClNameplates, Localize("Show name plates"), g_Config.m_ClNameplates, &Button))
-			g_Config.m_ClNameplates ^= 1;
-
-		if(g_Config.m_ClNameplates)
-		{
-			Right.HSplitTop(2.5f, 0, &Right);
-			Right.HSplitTop(20.0f, &Label, &Right);
-			Right.HSplitTop(20.0f, &Button, &Right);
-			str_format(aBuf, sizeof(aBuf), "%s: %i", Localize("Name plates size"), g_Config.m_ClNameplatesSize);
-			UI()->DoLabel(&Label, aBuf, 13.0f, TEXTALIGN_LEFT);
-			g_Config.m_ClNameplatesSize = (int)(UIEx()->DoScrollbarH(&g_Config.m_ClNameplatesSize, &Button, g_Config.m_ClNameplatesSize / 100.0f) * 100.0f + 0.1f);
-
-			Right.HSplitTop(20.0f, &Button, &Right);
-			if(DoButton_CheckBox(&g_Config.m_ClNameplatesTeamcolors, Localize("Use team colors for name plates"), g_Config.m_ClNameplatesTeamcolors, &Button))
-				g_Config.m_ClNameplatesTeamcolors ^= 1;
-
-			Right.HSplitTop(5.0f, 0, &Right);
-			Right.HSplitTop(20.0f, &Button, &Right);
-			if(DoButton_CheckBox(&g_Config.m_ClNameplatesClan, Localize("Show clan above name plates"), g_Config.m_ClNameplatesClan, &Button))
-				g_Config.m_ClNameplatesClan ^= 1;
-
-			if(g_Config.m_ClNameplatesClan)
-			{
-				Right.HSplitTop(2.5f, 0, &Right);
-				Right.HSplitTop(20.0f, &Label, &Right);
-				Right.HSplitTop(20.0f, &Button, &Right);
-				str_format(aBuf, sizeof(aBuf), "%s: %i", Localize("Clan plates size"), g_Config.m_ClNameplatesClanSize);
-				UI()->DoLabel(&Label, aBuf, 13.0f, TEXTALIGN_LEFT);
-				g_Config.m_ClNameplatesClanSize = (int)(UIEx()->DoScrollbarH(&g_Config.m_ClNameplatesClanSize, &Button, g_Config.m_ClNameplatesClanSize / 100.0f) * 100.0f + 0.1f);
-			}
-		}
 	}
 
 	// client
 	{
 		// headline
-		Client.HSplitTop(20.0f, &Label, &Client);
-		UI()->DoLabel(&Label, Localize("Client"), 20.0f, TEXTALIGN_LEFT);
-		Client.Margin(5.0f, &Client);
-		Client.VSplitMid(&Left, &Right);
-		Left.VSplitRight(5.0f, &Left, 0);
-		Right.VMargin(5.0f, &Right);
+		ClientSettings.HSplitTop(30.0f, &Label, &ClientSettings);
+		Ui()->DoLabel(&Label, Localize("Client"), 20.0f, TEXTALIGN_ML);
+		ClientSettings.HSplitTop(5.0f, nullptr, &ClientSettings);
+		ClientSettings.VSplitMid(&Left, &Right, 20.0f);
 
 		// skip main menu
-		Left.HSplitTop(5.0f, 0, &Left);
 		Left.HSplitTop(20.0f, &Button, &Left);
 		if(DoButton_CheckBox(&g_Config.m_ClSkipStartMenu, Localize("Skip the main menu"), g_Config.m_ClSkipStartMenu, &Button))
 			g_Config.m_ClSkipStartMenu ^= 1;
 
-		float SliderGroupMargin = 10.0f;
+		Left.HSplitTop(10.0f, nullptr, &Left);
+		Left.HSplitTop(20.0f, &Button, &Left);
+		str_copy(aBuf, " ");
+		str_append(aBuf, Localize("Hz", "Hertz"));
+		Ui()->DoScrollbarOption(&g_Config.m_ClRefreshRate, &g_Config.m_ClRefreshRate, &Button, Localize("Update Rate"), 10, 1000, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_INFINITE | CUi::SCROLLBAR_OPTION_NOCLAMPVALUE | CUi::SCROLLBAR_OPTION_DELAYUPDATE, aBuf);
+		Left.HSplitTop(5.0f, nullptr, &Left);
+		Left.HSplitTop(20.0f, &Button, &Left);
+		static int s_LowerRefreshRate;
+		if(DoButton_CheckBox(&s_LowerRefreshRate, Localize("Save power by lowering update rate (higher input latency)"), g_Config.m_ClRefreshRate <= 480 && g_Config.m_ClRefreshRate != 0, &Button))
+			g_Config.m_ClRefreshRate = g_Config.m_ClRefreshRate > 480 || g_Config.m_ClRefreshRate == 0 ? 480 : 0;
+
+		CUIRect SettingsButton;
+		Left.HSplitBottom(20.0f, &Left, &SettingsButton);
+		Left.HSplitBottom(5.0f, &Left, nullptr);
+		static CButtonContainer s_SettingsButtonId;
+		if(DoButton_Menu(&s_SettingsButtonId, Localize("Settings file"), 0, &SettingsButton))
+		{
+			Storage()->GetCompletePath(IStorage::TYPE_SAVE, CONFIG_FILE, aBuf, sizeof(aBuf));
+			Client()->ViewFile(aBuf);
+		}
+		GameClient()->m_Tooltips.DoToolTip(&s_SettingsButtonId, &SettingsButton, Localize("Open the settings file"));
+
+		CUIRect SavesButton;
+		Left.HSplitBottom(20.0f, &Left, &SavesButton);
+		Left.HSplitBottom(5.0f, &Left, nullptr);
+		static CButtonContainer s_SavesButtonId;
+		if(DoButton_Menu(&s_SavesButtonId, Localize("Saves file"), 0, &SavesButton))
+		{
+			Storage()->GetCompletePath(IStorage::TYPE_SAVE, SAVES_FILE, aBuf, sizeof(aBuf));
+			Client()->ViewFile(aBuf);
+		}
+		GameClient()->m_Tooltips.DoToolTip(&s_SavesButtonId, &SavesButton, Localize("Open the saves file"));
+
+		CUIRect ConfigButton;
+		Left.HSplitBottom(20.0f, &Left, &ConfigButton);
+		Left.HSplitBottom(5.0f, &Left, nullptr);
+		static CButtonContainer s_ConfigButtonId;
+		if(DoButton_Menu(&s_ConfigButtonId, Localize("Config directory"), 0, &ConfigButton))
+		{
+			Storage()->GetCompletePath(IStorage::TYPE_SAVE, "", aBuf, sizeof(aBuf));
+			Client()->ViewFile(aBuf);
+		}
+		GameClient()->m_Tooltips.DoToolTip(&s_ConfigButtonId, &ConfigButton, Localize("Open the directory that contains the configuration and user files"));
+
+		CUIRect DirectoryButton;
+		Left.HSplitBottom(20.0f, &Left, &DirectoryButton);
+		Left.HSplitBottom(5.0f, &Left, nullptr);
+		static CButtonContainer s_ThemesButtonId;
+		if(DoButton_Menu(&s_ThemesButtonId, Localize("Themes directory"), 0, &DirectoryButton))
+		{
+			Storage()->GetCompletePath(IStorage::TYPE_SAVE, "themes", aBuf, sizeof(aBuf));
+			Storage()->CreateFolder("themes", IStorage::TYPE_SAVE);
+			Client()->ViewFile(aBuf);
+		}
+		GameClient()->m_Tooltips.DoToolTip(&s_ThemesButtonId, &DirectoryButton, Localize("Open the directory to add custom themes"));
+
+		Left.HSplitTop(20.0f, nullptr, &Left);
+		RenderThemeSelection(Left);
 
 		// auto demo settings
 		{
-			Right.HSplitTop(40.0f, 0, &Right);
+			Right.HSplitTop(40.0f, nullptr, &Right);
 			Right.HSplitTop(20.0f, &Button, &Right);
 			if(DoButton_CheckBox(&g_Config.m_ClAutoDemoRecord, Localize("Automatically record demos"), g_Config.m_ClAutoDemoRecord, &Button))
 				g_Config.m_ClAutoDemoRecord ^= 1;
 
-			Right.HSplitTop(20.0f, &Label, &Right);
-			if(g_Config.m_ClAutoDemoMax)
-				str_format(aBuf, sizeof(aBuf), "%s: %i", Localize("Max demos"), g_Config.m_ClAutoDemoMax);
-			else
-				str_format(aBuf, sizeof(aBuf), "%s: %s", Localize("Max demos"), "∞");
-			UI()->DoLabel(&Label, aBuf, 13.0f, TEXTALIGN_LEFT);
-			Right.HSplitTop(20.0f, &Button, &Right);
-			g_Config.m_ClAutoDemoMax = static_cast<int>(UIEx()->DoScrollbarH(&g_Config.m_ClAutoDemoMax, &Button, g_Config.m_ClAutoDemoMax / 1000.0f) * 1000.0f + 0.1f);
+			Right.HSplitTop(2 * 20.0f, &Button, &Right);
+			if(g_Config.m_ClAutoDemoRecord)
+				Ui()->DoScrollbarOption(&g_Config.m_ClAutoDemoMax, &g_Config.m_ClAutoDemoMax, &Button, Localize("Max demos"), 1, 1000, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_INFINITE | CUi::SCROLLBAR_OPTION_MULTILINE);
 
-			Right.HSplitTop(SliderGroupMargin, 0, &Right);
+			Right.HSplitTop(10.0f, nullptr, &Right);
 			Right.HSplitTop(20.0f, &Button, &Right);
 			if(DoButton_CheckBox(&g_Config.m_ClAutoScreenshot, Localize("Automatically take game over screenshot"), g_Config.m_ClAutoScreenshot, &Button))
 				g_Config.m_ClAutoScreenshot ^= 1;
 
-			Right.HSplitTop(20.0f, &Label, &Right);
-			if(g_Config.m_ClAutoScreenshotMax)
-				str_format(aBuf, sizeof(aBuf), "%s: %i", Localize("Max Screenshots"), g_Config.m_ClAutoScreenshotMax);
-			else
-				str_format(aBuf, sizeof(aBuf), "%s: %s", Localize("Max Screenshots"), "∞");
-			UI()->DoLabel(&Label, aBuf, 13.0f, TEXTALIGN_LEFT);
-			Right.HSplitTop(20.0f, &Button, &Right);
-			g_Config.m_ClAutoScreenshotMax = static_cast<int>(UIEx()->DoScrollbarH(&g_Config.m_ClAutoScreenshotMax, &Button, g_Config.m_ClAutoScreenshotMax / 1000.0f) * 1000.0f + 0.1f);
-		}
-
-		Left.HSplitTop(10.0f, 0, &Left);
-		Left.HSplitTop(20.0f, &Label, &Left);
-		if(g_Config.m_ClRefreshRate)
-			str_format(aBuf, sizeof(aBuf), "%s: %i Hz", Localize("Refresh Rate"), g_Config.m_ClRefreshRate);
-		else
-			str_format(aBuf, sizeof(aBuf), "%s: %s", Localize("Refresh Rate"), "∞");
-		UI()->DoLabel(&Label, aBuf, 13.0f, TEXTALIGN_LEFT);
-		Left.HSplitTop(20.0f, &Button, &Left);
-		g_Config.m_ClRefreshRate = static_cast<int>(UIEx()->DoScrollbarH(&g_Config.m_ClRefreshRate, &Button, g_Config.m_ClRefreshRate / 10000.0f) * 10000.0f + 0.1f);
-
-		Left.HSplitTop(15.0f, 0, &Left);
-		CUIRect SettingsButton;
-		Left.HSplitBottom(25.0f, &Left, &SettingsButton);
-
-		SettingsButton.HSplitTop(5.0f, 0, &SettingsButton);
-		static int s_SettingsButtonID = 0;
-		if(DoButton_Menu(&s_SettingsButtonID, Localize("Settings file"), 0, &SettingsButton))
-		{
-			Storage()->GetCompletePath(IStorage::TYPE_SAVE, CONFIG_FILE, aBuf, sizeof(aBuf));
-			if(!open_file(aBuf))
-			{
-				dbg_msg("menus", "couldn't open file");
-			}
-		}
-
-		Left.HSplitTop(15.0f, 0, &Left);
-		CUIRect ConfigButton;
-		Left.HSplitBottom(25.0f, &Left, &ConfigButton);
-
-		ConfigButton.HSplitTop(5.0f, 0, &ConfigButton);
-		static int s_ConfigButtonID = 0;
-		if(DoButton_Menu(&s_ConfigButtonID, Localize("Config directory"), 0, &ConfigButton))
-		{
-			Storage()->GetCompletePath(IStorage::TYPE_SAVE, "", aBuf, sizeof(aBuf));
-			if(!open_file(aBuf))
-			{
-				dbg_msg("menus", "couldn't open file");
-			}
-		}
-
-		Left.HSplitTop(15.0f, 0, &Left);
-		CUIRect DirectoryButton;
-		Left.HSplitBottom(25.0f, &Left, &DirectoryButton);
-		RenderThemeSelection(Left);
-
-		DirectoryButton.HSplitTop(5.0f, 0, &DirectoryButton);
-		static int s_ThemesButtonID = 0;
-		if(DoButton_Menu(&s_ThemesButtonID, Localize("Themes directory"), 0, &DirectoryButton))
-		{
-			Storage()->GetCompletePath(IStorage::TYPE_SAVE, "themes", aBuf, sizeof(aBuf));
-			Storage()->CreateFolder("themes", IStorage::TYPE_SAVE);
-			if(!open_file(aBuf))
-			{
-				dbg_msg("menus", "couldn't open file");
-			}
+			Right.HSplitTop(2 * 20.0f, &Button, &Right);
+			if(g_Config.m_ClAutoScreenshot)
+				Ui()->DoScrollbarOption(&g_Config.m_ClAutoScreenshotMax, &g_Config.m_ClAutoScreenshotMax, &Button, Localize("Max Screenshots"), 1, 1000, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_INFINITE | CUi::SCROLLBAR_OPTION_MULTILINE);
 		}
 
 		// auto statboard screenshot
 		{
-			Right.HSplitTop(SliderGroupMargin, 0, &Right);
+			Right.HSplitTop(10.0f, nullptr, &Right);
 			Right.HSplitTop(20.0f, &Button, &Right);
-			if(DoButton_CheckBox(&g_Config.m_ClAutoStatboardScreenshot,
-				   Localize("Automatically take statboard screenshot"),
-				   g_Config.m_ClAutoStatboardScreenshot, &Button))
+			if(DoButton_CheckBox(&g_Config.m_ClAutoStatboardScreenshot, Localize("Automatically take statboard screenshot"), g_Config.m_ClAutoStatboardScreenshot, &Button))
 			{
 				g_Config.m_ClAutoStatboardScreenshot ^= 1;
 			}
 
-			Right.HSplitTop(20.0f, &Label, &Right);
-			if(g_Config.m_ClAutoStatboardScreenshotMax)
-				str_format(aBuf, sizeof(aBuf), "%s: %i", Localize("Max Screenshots"), g_Config.m_ClAutoStatboardScreenshotMax);
-			else
-				str_format(aBuf, sizeof(aBuf), "%s: %s", Localize("Max Screenshots"), "∞");
-			UI()->DoLabel(&Label, aBuf, 13.0f, TEXTALIGN_LEFT);
-			Right.HSplitTop(20.0f, &Button, &Right);
-			g_Config.m_ClAutoStatboardScreenshotMax =
-				static_cast<int>(UIEx()->DoScrollbarH(&g_Config.m_ClAutoStatboardScreenshotMax,
-							 &Button,
-							 g_Config.m_ClAutoStatboardScreenshotMax / 1000.0f) *
-							 1000.0f +
-						 0.1f);
+			Right.HSplitTop(2 * 20.0f, &Button, &Right);
+			if(g_Config.m_ClAutoStatboardScreenshot)
+				Ui()->DoScrollbarOption(&g_Config.m_ClAutoStatboardScreenshotMax, &g_Config.m_ClAutoStatboardScreenshotMax, &Button, Localize("Max Screenshots"), 1, 1000, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_INFINITE | CUi::SCROLLBAR_OPTION_MULTILINE);
 		}
 
 		// auto statboard csv
 		{
-			Right.HSplitTop(SliderGroupMargin, 0, &Right); //
+			Right.HSplitTop(10.0f, nullptr, &Right);
 			Right.HSplitTop(20.0f, &Button, &Right);
-			if(DoButton_CheckBox(&g_Config.m_ClAutoCSV,
-				   Localize("Automatically create statboard csv"),
-				   g_Config.m_ClAutoCSV, &Button))
+			if(DoButton_CheckBox(&g_Config.m_ClAutoCSV, Localize("Automatically create statboard csv"), g_Config.m_ClAutoCSV, &Button))
 			{
 				g_Config.m_ClAutoCSV ^= 1;
 			}
 
-			Right.HSplitTop(20.0f, &Label, &Right);
-			if(g_Config.m_ClAutoCSVMax)
-				str_format(aBuf, sizeof(aBuf), "%s: %i", Localize("Max CSVs"), g_Config.m_ClAutoCSVMax);
-			else
-				str_format(aBuf, sizeof(aBuf), "%s: %s", Localize("Max CSVs"), "∞");
-			UI()->DoLabel(&Label, aBuf, 13.0f, TEXTALIGN_LEFT);
-			Right.HSplitTop(20.0f, &Button, &Right);
-			g_Config.m_ClAutoCSVMax =
-				static_cast<int>(UIEx()->DoScrollbarH(&g_Config.m_ClAutoCSVMax,
-							 &Button,
-							 g_Config.m_ClAutoCSVMax / 1000.0f) *
-							 1000.0f +
-						 0.1f);
+			Right.HSplitTop(2 * 20.0f, &Button, &Right);
+			if(g_Config.m_ClAutoCSV)
+				Ui()->DoScrollbarOption(&g_Config.m_ClAutoCSVMax, &g_Config.m_ClAutoCSVMax, &Button, Localize("Max CSVs"), 1, 1000, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_INFINITE | CUi::SCROLLBAR_OPTION_MULTILINE);
 		}
 	}
 }
@@ -342,1015 +234,616 @@ void CMenus::SetNeedSendInfo()
 
 void CMenus::RenderSettingsPlayer(CUIRect MainView)
 {
-	CUIRect Button, Label, Dummy;
-	MainView.HSplitTop(10.0f, 0, &MainView);
+	CUIRect TabBar, PlayerTab, DummyTab, ChangeInfo, QuickSearch;
+	MainView.HSplitTop(20.0f, &TabBar, &MainView);
+	TabBar.VSplitMid(&TabBar, &ChangeInfo, 20.f);
+	TabBar.VSplitMid(&PlayerTab, &DummyTab);
+	MainView.HSplitTop(10.0f, nullptr, &MainView);
 
-	char *pName = g_Config.m_PlayerName;
-	const char *pNameFallback = Client()->PlayerName();
-	char *pClan = g_Config.m_PlayerClan;
-	int *pCountry = &g_Config.m_PlayerCountry;
-
-	if(m_Dummy)
+	static CButtonContainer s_PlayerTabButton;
+	if(DoButton_MenuTab(&s_PlayerTabButton, Localize("Player"), !m_Dummy, &PlayerTab, IGraphics::CORNER_L, nullptr, nullptr, nullptr, nullptr, 4.0f))
 	{
-		pName = g_Config.m_ClDummyName;
-		pNameFallback = Client()->DummyName();
-		pClan = g_Config.m_ClDummyClan;
+		m_Dummy = false;
+	}
+
+	static CButtonContainer s_DummyTabButton;
+	if(DoButton_MenuTab(&s_DummyTabButton, Localize("Dummy"), m_Dummy, &DummyTab, IGraphics::CORNER_R, nullptr, nullptr, nullptr, nullptr, 4.0f))
+	{
+		m_Dummy = true;
+	}
+
+	if(Client()->State() == IClient::STATE_ONLINE &&
+		GameClient()->m_aNextChangeInfo[m_Dummy] > Client()->GameTick(m_Dummy))
+	{
+		char aChangeInfo[128], aTimeLeft[32];
+		str_format(aTimeLeft, sizeof(aTimeLeft), Localize("%ds left"), (GameClient()->m_aNextChangeInfo[m_Dummy] - Client()->GameTick(m_Dummy) + Client()->GameTickSpeed() - 1) / Client()->GameTickSpeed());
+		str_format(aChangeInfo, sizeof(aChangeInfo), "%s: %s", Localize("Player info change cooldown"), aTimeLeft);
+		Ui()->DoLabel(&ChangeInfo, aChangeInfo, 10.f, TEXTALIGN_ML);
+	}
+
+	static CLineInput s_NameInput;
+	static CLineInput s_ClanInput;
+
+	int *pCountry;
+	if(!m_Dummy)
+	{
+		pCountry = &g_Config.m_PlayerCountry;
+		s_NameInput.SetBuffer(g_Config.m_PlayerName, sizeof(g_Config.m_PlayerName));
+		s_NameInput.SetEmptyText(Client()->PlayerName());
+		s_ClanInput.SetBuffer(g_Config.m_PlayerClan, sizeof(g_Config.m_PlayerClan));
+	}
+	else
+	{
 		pCountry = &g_Config.m_ClDummyCountry;
+		s_NameInput.SetBuffer(g_Config.m_ClDummyName, sizeof(g_Config.m_ClDummyName));
+		s_NameInput.SetEmptyText(Client()->DummyName());
+		s_ClanInput.SetBuffer(g_Config.m_ClDummyClan, sizeof(g_Config.m_ClDummyClan));
 	}
 
 	// player name
+	CUIRect Button, Label;
 	MainView.HSplitTop(20.0f, &Button, &MainView);
 	Button.VSplitLeft(80.0f, &Label, &Button);
-	Button.VSplitLeft(150.0f, &Button, 0);
+	Button.VSplitLeft(150.0f, &Button, nullptr);
 	char aBuf[128];
 	str_format(aBuf, sizeof(aBuf), "%s:", Localize("Name"));
-	UI()->DoLabel(&Label, aBuf, 14.0f, TEXTALIGN_LEFT);
-	static float s_OffsetName = 0.0f;
-	SUIExEditBoxProperties EditProps;
-	EditProps.m_pEmptyText = pNameFallback;
-	if(UIEx()->DoEditBox(pName, &Button, pName, sizeof(g_Config.m_PlayerName), 14.0f, &s_OffsetName, false, CUI::CORNER_ALL, EditProps))
+	Ui()->DoLabel(&Label, aBuf, 14.0f, TEXTALIGN_ML);
+	if(Ui()->DoEditBox(&s_NameInput, &Button, 14.0f))
 	{
 		SetNeedSendInfo();
 	}
 
 	// player clan
-	MainView.HSplitTop(5.0f, 0, &MainView);
+	MainView.HSplitTop(5.0f, nullptr, &MainView);
 	MainView.HSplitTop(20.0f, &Button, &MainView);
 	Button.VSplitLeft(80.0f, &Label, &Button);
-	Button.VSplitLeft(200.0f, &Button, &Dummy);
-	Button.VSplitLeft(150.0f, &Button, 0);
+	Button.VSplitLeft(150.0f, &Button, nullptr);
 	str_format(aBuf, sizeof(aBuf), "%s:", Localize("Clan"));
-	UI()->DoLabel(&Label, aBuf, 14.0f, TEXTALIGN_LEFT);
-	static float s_OffsetClan = 0.0f;
-	if(UIEx()->DoEditBox(pClan, &Button, pClan, sizeof(g_Config.m_PlayerClan), 14.0f, &s_OffsetClan))
+	Ui()->DoLabel(&Label, aBuf, 14.0f, TEXTALIGN_ML);
+	if(Ui()->DoEditBox(&s_ClanInput, &Button, 14.0f))
 	{
 		SetNeedSendInfo();
 	}
 
-	if(DoButton_CheckBox(&m_Dummy, Localize("Dummy settings"), m_Dummy, &Dummy))
+	// country flag selector
+	static CLineInputBuffered<25> s_FlagFilterInput;
+
+	std::vector<const CCountryFlags::CCountryFlag *> vpFilteredFlags;
+	for(size_t i = 0; i < GameClient()->m_CountryFlags.Num(); ++i)
 	{
-		m_Dummy ^= 1;
+		const CCountryFlags::CCountryFlag &Entry = GameClient()->m_CountryFlags.GetByIndex(i);
+		if(!str_find_nocase(Entry.m_aCountryCodeString, s_FlagFilterInput.GetString()))
+			continue;
+		vpFilteredFlags.push_back(&Entry);
 	}
 
-	static bool s_ListBoxUsed = false;
-	if(UI()->CheckActiveItem(pClan) || UI()->CheckActiveItem(pName))
-		s_ListBoxUsed = false;
+	MainView.HSplitTop(10.0f, nullptr, &MainView);
+	MainView.HSplitBottom(20.0f, &MainView, &QuickSearch);
+	MainView.HSplitBottom(5.0f, &MainView, nullptr);
+	QuickSearch.VSplitLeft(220.0f, &QuickSearch, nullptr);
 
-	// country flag selector
-	MainView.HSplitTop(20.0f, 0, &MainView);
-	static float s_ScrollValue = 0.0f;
 	int OldSelected = -1;
-	UiDoListboxStart(&s_ScrollValue, &MainView, 50.0f, Localize("Country / Region"), "", m_pClient->m_CountryFlags.Num(), 6, OldSelected, s_ScrollValue);
+	static CListBox s_ListBox;
+	s_ListBox.DoStart(48.0f, vpFilteredFlags.size(), 10, 3, OldSelected, &MainView);
 
-	for(size_t i = 0; i < m_pClient->m_CountryFlags.Num(); ++i)
+	for(size_t i = 0; i < vpFilteredFlags.size(); i++)
 	{
-		const CCountryFlags::CCountryFlag *pEntry = m_pClient->m_CountryFlags.GetByIndex(i);
+		const CCountryFlags::CCountryFlag *pEntry = vpFilteredFlags[i];
+
 		if(pEntry->m_CountryCode == *pCountry)
 			OldSelected = i;
 
-		CListboxItem Item = UiDoListboxNextItem(&pEntry->m_CountryCode, OldSelected >= 0 && (size_t)OldSelected == i, s_ListBoxUsed);
-		if(Item.m_Visible)
+		const CListboxItem Item = s_ListBox.DoNextItem(&pEntry->m_CountryCode, OldSelected >= 0 && (size_t)OldSelected == i);
+		if(!Item.m_Visible)
+			continue;
+
+		CUIRect FlagRect;
+		Item.m_Rect.Margin(5.0f, &FlagRect);
+		FlagRect.HSplitBottom(12.0f, &FlagRect, &Label);
+		Label.HSplitTop(2.0f, nullptr, &Label);
+		const float OldWidth = FlagRect.w;
+		FlagRect.w = FlagRect.h * 2;
+		FlagRect.x += (OldWidth - FlagRect.w) / 2.0f;
+		GameClient()->m_CountryFlags.Render(pEntry->m_CountryCode, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f), FlagRect.x, FlagRect.y, FlagRect.w, FlagRect.h);
+
+		if(pEntry->m_Texture.IsValid())
 		{
-			Item.m_Rect.Margin(5.0f, &Item.m_Rect);
-			Item.m_Rect.HSplitBottom(10.0f, &Item.m_Rect, &Label);
-			float OldWidth = Item.m_Rect.w;
-			Item.m_Rect.w = Item.m_Rect.h * 2;
-			Item.m_Rect.x += (OldWidth - Item.m_Rect.w) / 2.0f;
-			ColorRGBA Color(1.0f, 1.0f, 1.0f, 1.0f);
-			m_pClient->m_CountryFlags.Render(pEntry->m_CountryCode, &Color, Item.m_Rect.x, Item.m_Rect.y, Item.m_Rect.w, Item.m_Rect.h);
-			if(pEntry->m_Texture.IsValid())
-				UI()->DoLabel(&Label, pEntry->m_aCountryCodeString, 10.0f, TEXTALIGN_CENTER);
+			Ui()->DoLabel(&Label, pEntry->m_aCountryCodeString, 10.0f, TEXTALIGN_MC);
 		}
 	}
 
-	bool Clicked = false;
-	const int NewSelected = UiDoListboxEnd(&s_ScrollValue, 0, &Clicked);
-	if(Clicked)
-		s_ListBoxUsed = true;
-
+	const int NewSelected = s_ListBox.DoEnd();
 	if(OldSelected != NewSelected)
 	{
-		*pCountry = m_pClient->m_CountryFlags.GetByIndex(NewSelected)->m_CountryCode;
+		*pCountry = vpFilteredFlags[NewSelected]->m_CountryCode;
 		SetNeedSendInfo();
 	}
+
+	Ui()->DoEditBox_Search(&s_FlagFilterInput, &QuickSearch, 14.0f, !Ui()->IsPopupOpen() && !GameClient()->m_GameConsole.IsActive());
 }
-
-struct CUISkin
-{
-	const CSkin *m_pSkin;
-
-	CUISkin() :
-		m_pSkin(nullptr) {}
-	CUISkin(const CSkin *pSkin) :
-		m_pSkin(pSkin) {}
-
-	bool operator<(const CUISkin &Other) const { return str_comp_nocase(m_pSkin->m_aName, Other.m_pSkin->m_aName) < 0; }
-
-	bool operator<(const char *pOther) const { return str_comp_nocase(m_pSkin->m_aName, pOther) < 0; }
-	bool operator==(const char *pOther) const { return !str_comp_nocase(m_pSkin->m_aName, pOther); }
-};
 
 void CMenus::RenderSettingsTee(CUIRect MainView)
 {
-	CUIRect Button, Label, Dummy, DummyLabel, SkinList, QuickSearch, QuickSearchClearButton, SkinDB, SkinPrefix, SkinPrefixLabel, DirectoryButton, RefreshButton, Eyes, EyesLabel, EyesTee, EyesRight;
+	CUIRect TabBar, PlayerTab, DummyTab, ChangeInfo;
+	MainView.HSplitTop(20.0f, &TabBar, &MainView);
+	TabBar.VSplitMid(&TabBar, &ChangeInfo, 20.f);
+	TabBar.VSplitMid(&PlayerTab, &DummyTab);
+	MainView.HSplitTop(10.0f, nullptr, &MainView);
 
-	static bool s_InitSkinlist = true;
-	Eyes = MainView;
-
-	char *pSkinName = g_Config.m_ClPlayerSkin;
-	int *UseCustomColor = &g_Config.m_ClPlayerUseCustomColor;
-	unsigned *ColorBody = &g_Config.m_ClPlayerColorBody;
-	unsigned *ColorFeet = &g_Config.m_ClPlayerColorFeet;
-
-	if(m_Dummy)
+	static CButtonContainer s_PlayerTabButton;
+	if(DoButton_MenuTab(&s_PlayerTabButton, Localize("Player"), !m_Dummy, &PlayerTab, IGraphics::CORNER_L, nullptr, nullptr, nullptr, nullptr, 4.0f))
 	{
-		pSkinName = g_Config.m_ClDummySkin;
-		UseCustomColor = &g_Config.m_ClDummyUseCustomColor;
-		ColorBody = &g_Config.m_ClDummyColorBody;
-		ColorFeet = &g_Config.m_ClDummyColorFeet;
+		m_Dummy = false;
+		m_SkinListScrollToSelected = true;
 	}
 
-	// skin info
-	CTeeRenderInfo OwnSkinInfo;
-	const CSkin *pSkin = m_pClient->m_Skins.Get(m_pClient->m_Skins.Find(pSkinName));
-	OwnSkinInfo.m_OriginalRenderSkin = pSkin->m_OriginalSkin;
-	OwnSkinInfo.m_ColorableRenderSkin = pSkin->m_ColorableSkin;
-	OwnSkinInfo.m_SkinMetrics = pSkin->m_Metrics;
-	OwnSkinInfo.m_CustomColoredSkin = *UseCustomColor;
-	if(*UseCustomColor)
+	static CButtonContainer s_DummyTabButton;
+	if(DoButton_MenuTab(&s_DummyTabButton, Localize("Dummy"), m_Dummy, &DummyTab, IGraphics::CORNER_R, nullptr, nullptr, nullptr, nullptr, 4.0f))
 	{
-		OwnSkinInfo.m_ColorBody = color_cast<ColorRGBA>(ColorHSLA(*ColorBody).UnclampLighting());
-		OwnSkinInfo.m_ColorFeet = color_cast<ColorRGBA>(ColorHSLA(*ColorFeet).UnclampLighting());
+		m_Dummy = true;
+		m_SkinListScrollToSelected = true;
+	}
+
+	if(Client()->State() == IClient::STATE_ONLINE &&
+		GameClient()->m_aNextChangeInfo[m_Dummy] > Client()->GameTick(m_Dummy))
+	{
+		char aChangeInfo[128], aTimeLeft[32];
+		str_format(aTimeLeft, sizeof(aTimeLeft), Localize("%ds left"), (GameClient()->m_aNextChangeInfo[m_Dummy] - Client()->GameTick(m_Dummy) + Client()->GameTickSpeed() - 1) / Client()->GameTickSpeed());
+		str_format(aChangeInfo, sizeof(aChangeInfo), "%s: %s", Localize("Player info change cooldown"), aTimeLeft);
+		Ui()->DoLabel(&ChangeInfo, aChangeInfo, 10.f, TEXTALIGN_ML);
+	}
+
+	if(g_Config.m_Debug)
+	{
+		const CSkins::CSkinLoadingStats Stats = GameClient()->m_Skins.LoadingStats();
+		char aStats[256];
+		str_format(aStats, sizeof(aStats), "unloaded: %" PRIzu ", pending: %" PRIzu ", loading: %" PRIzu ",\nloaded: %" PRIzu ", error: %" PRIzu ", notfound: %" PRIzu,
+			Stats.m_NumUnloaded, Stats.m_NumPending, Stats.m_NumLoading, Stats.m_NumLoaded, Stats.m_NumError, Stats.m_NumNotFound);
+		Ui()->DoLabel(&ChangeInfo, aStats, 9.0f, TEXTALIGN_MR);
+	}
+
+	char *pSkinName;
+	size_t SkinNameSize;
+	int *pUseCustomColor;
+	unsigned *pColorBody;
+	unsigned *pColorFeet;
+	int *pEmote;
+	if(!m_Dummy)
+	{
+		pSkinName = g_Config.m_ClPlayerSkin;
+		SkinNameSize = sizeof(g_Config.m_ClPlayerSkin);
+		pUseCustomColor = &g_Config.m_ClPlayerUseCustomColor;
+		pColorBody = &g_Config.m_ClPlayerColorBody;
+		pColorFeet = &g_Config.m_ClPlayerColorFeet;
+		pEmote = &g_Config.m_ClPlayerDefaultEyes;
 	}
 	else
 	{
-		OwnSkinInfo.m_ColorBody = ColorRGBA(1.0f, 1.0f, 1.0f);
-		OwnSkinInfo.m_ColorFeet = ColorRGBA(1.0f, 1.0f, 1.0f);
+		pSkinName = g_Config.m_ClDummySkin;
+		SkinNameSize = sizeof(g_Config.m_ClDummySkin);
+		pUseCustomColor = &g_Config.m_ClDummyUseCustomColor;
+		pColorBody = &g_Config.m_ClDummyColorBody;
+		pColorFeet = &g_Config.m_ClDummyColorFeet;
+		pEmote = &g_Config.m_ClDummyDefaultEyes;
 	}
-	OwnSkinInfo.m_Size = 50.0f;
 
-	MainView.HSplitTop(10.0f, &Label, &MainView);
-	Label.VSplitLeft(280.0f, &Label, &Dummy);
-	Label.VSplitLeft(230.0f, &Label, 0);
-	Dummy.VSplitLeft(170.0f, &Dummy, &SkinPrefix);
-	SkinPrefix.VSplitLeft(120.0f, &SkinPrefix, &EyesRight);
-	char aBuf[128 + IO_MAX_PATH_LENGTH];
-	str_format(aBuf, sizeof(aBuf), "%s:", Localize("Your skin"));
-	UI()->DoLabel(&Label, aBuf, 14.0f, TEXTALIGN_LEFT);
-
-	Dummy.HSplitTop(20.0f, &DummyLabel, &Dummy);
-
-	if(DoButton_CheckBox(&m_Dummy, Localize("Dummy settings"), m_Dummy, &DummyLabel))
+	const float EyeButtonSize = 40.0f;
+	const bool RenderEyesBelow = MainView.w < 750.0f;
+	CUIRect YourSkin, Checkboxes, SkinPrefix, Eyes, Button, Label;
+	MainView.HSplitTop(90.0f, &YourSkin, &MainView);
+	if(RenderEyesBelow)
 	{
-		m_Dummy ^= 1;
+		YourSkin.VSplitLeft(MainView.w * 0.45f, &YourSkin, &Checkboxes);
+		Checkboxes.VSplitLeft(MainView.w * 0.35f, &Checkboxes, &SkinPrefix);
+		MainView.HSplitTop(5.0f, nullptr, &MainView);
+		MainView.HSplitTop(EyeButtonSize, &Eyes, &MainView);
+		Eyes.VSplitRight(EyeButtonSize * (float)NUM_EMOTES + 5.0f * (float)(NUM_EMOTES - 1), nullptr, &Eyes);
 	}
-	GameClient()->m_Tooltips.DoToolTip(&m_Dummy, &DummyLabel, Localize("Toggle to edit your dummy settings"));
+	else
+	{
+		YourSkin.VSplitRight(3 * EyeButtonSize + 2 * 5.0f, &YourSkin, &Eyes);
+		const float RemainderWidth = YourSkin.w;
+		YourSkin.VSplitLeft(RemainderWidth * 0.4f, &YourSkin, &Checkboxes);
+		Checkboxes.VSplitLeft(RemainderWidth * 0.35f, &Checkboxes, &SkinPrefix);
+		SkinPrefix.VSplitRight(20.0f, &SkinPrefix, nullptr);
+	}
+	YourSkin.VSplitRight(20.0f, &YourSkin, nullptr);
+	Checkboxes.VSplitRight(20.0f, &Checkboxes, nullptr);
 
-	Dummy.HSplitTop(20.0f, &DummyLabel, &Dummy);
-
-	if(DoButton_CheckBox(&g_Config.m_ClDownloadSkins, Localize("Download skins"), g_Config.m_ClDownloadSkins, &DummyLabel))
+	// Checkboxes
+	bool ShouldRefresh = false;
+	Checkboxes.HSplitTop(20.0f, &Button, &Checkboxes);
+	if(DoButton_CheckBox(&g_Config.m_ClDownloadSkins, Localize("Download skins"), g_Config.m_ClDownloadSkins, &Button))
 	{
 		g_Config.m_ClDownloadSkins ^= 1;
+		ShouldRefresh = true;
 	}
 
-	Dummy.HSplitTop(20.0f, &DummyLabel, &Dummy);
-
-	if(DoButton_CheckBox(&g_Config.m_ClDownloadCommunitySkins, Localize("Download community skins"), g_Config.m_ClDownloadCommunitySkins, &DummyLabel))
+	Checkboxes.HSplitTop(20.0f, &Button, &Checkboxes);
+	if(DoButton_CheckBox(&g_Config.m_ClDownloadCommunitySkins, Localize("Download community skins"), g_Config.m_ClDownloadCommunitySkins, &Button))
 	{
 		g_Config.m_ClDownloadCommunitySkins ^= 1;
+		ShouldRefresh = true;
 	}
 
-	Dummy.HSplitTop(20.0f, &DummyLabel, &Dummy);
-
-	if(DoButton_CheckBox(&g_Config.m_ClVanillaSkinsOnly, Localize("Vanilla skins only"), g_Config.m_ClVanillaSkinsOnly, &DummyLabel))
+	Checkboxes.HSplitTop(20.0f, &Button, &Checkboxes);
+	if(DoButton_CheckBox(&g_Config.m_ClVanillaSkinsOnly, Localize("Vanilla skins only"), g_Config.m_ClVanillaSkinsOnly, &Button))
 	{
 		g_Config.m_ClVanillaSkinsOnly ^= 1;
-		s_InitSkinlist = true;
+		ShouldRefresh = true;
 	}
 
-	Dummy.HSplitTop(20.0f, &DummyLabel, &Dummy);
-
-	if(DoButton_CheckBox(&g_Config.m_ClFatSkins, Localize("Fat skins (DDFat)"), g_Config.m_ClFatSkins, &DummyLabel))
+	Checkboxes.HSplitTop(20.0f, &Button, &Checkboxes);
+	if(DoButton_CheckBox(&g_Config.m_ClFatSkins, Localize("Fat skins (DDFat)"), g_Config.m_ClFatSkins, &Button))
 	{
 		g_Config.m_ClFatSkins ^= 1;
 	}
 
-	SkinPrefix.HSplitTop(20.0f, &SkinPrefixLabel, &SkinPrefix);
-	UI()->DoLabel(&SkinPrefixLabel, Localize("Skin prefix"), 14.0f, TEXTALIGN_LEFT);
-
-	SkinPrefix.HSplitTop(20.0f, &SkinPrefixLabel, &SkinPrefix);
+	// Skin prefix
 	{
-		static int s_ClearButton = 0;
-		static float s_Offset = 0.0f;
-		UIEx()->DoClearableEditBox(g_Config.m_ClSkinPrefix, &s_ClearButton, &SkinPrefixLabel, g_Config.m_ClSkinPrefix, sizeof(g_Config.m_ClSkinPrefix), 14.0f, &s_Offset);
-	}
+		SkinPrefix.HSplitTop(20.0f, &Label, &SkinPrefix);
+		Ui()->DoLabel(&Label, Localize("Skin prefix"), 14.0f, TEXTALIGN_ML);
 
-	SkinPrefix.HSplitTop(2.0f, 0, &SkinPrefix);
-	{
-		static const char *s_aSkinPrefixes[] = {"kitty", "santa"};
-		for(auto &pPrefix : s_aSkinPrefixes)
+		SkinPrefix.HSplitTop(20.0f, &Button, &SkinPrefix);
+		static CLineInput s_SkinPrefixInput(g_Config.m_ClSkinPrefix, sizeof(g_Config.m_ClSkinPrefix));
+		if(Ui()->DoClearableEditBox(&s_SkinPrefixInput, &Button, 14.0f))
+		{
+			ShouldRefresh = true;
+		}
+
+		SkinPrefix.HSplitTop(2.0f, nullptr, &SkinPrefix);
+
+		static const char *s_apSkinPrefixes[] = {"kitty", "santa"};
+		static CButtonContainer s_aPrefixButtons[std::size(s_apSkinPrefixes)];
+		for(size_t i = 0; i < std::size(s_apSkinPrefixes); i++)
 		{
 			SkinPrefix.HSplitTop(20.0f, &Button, &SkinPrefix);
 			Button.HMargin(2.0f, &Button);
-			if(DoButton_Menu(&pPrefix, pPrefix, 0, &Button))
+			if(DoButton_Menu(&s_aPrefixButtons[i], s_apSkinPrefixes[i], 0, &Button))
 			{
-				str_copy(g_Config.m_ClSkinPrefix, pPrefix, sizeof(g_Config.m_ClSkinPrefix));
+				str_copy(g_Config.m_ClSkinPrefix, s_apSkinPrefixes[i]);
+				ShouldRefresh = true;
 			}
 		}
 	}
 
-	Dummy.HSplitTop(20.0f, &DummyLabel, &Dummy);
+	// Player skin area
+	CUIRect CustomColorsButton, RandomSkinButton;
+	YourSkin.HSplitTop(20.0f, &Label, &YourSkin);
+	YourSkin.HSplitBottom(20.0f, &YourSkin, &CustomColorsButton);
+	CustomColorsButton.VSplitRight(30.0f, &CustomColorsButton, &RandomSkinButton);
+	CustomColorsButton.VSplitRight(20.0f, &CustomColorsButton, nullptr);
+	YourSkin.VSplitLeft(65.0f, &YourSkin, &Button);
+	Button.VSplitLeft(5.0f, nullptr, &Button);
+	Button.HMargin((Button.h - 20.0f) / 2.0f, &Button);
 
-	MainView.HSplitTop(50.0f, &Label, &MainView);
-	Label.VSplitLeft(230.0f, &Label, 0);
-	CAnimState *pIdleState = CAnimState::GetIdle();
-	vec2 OffsetToMid;
-	RenderTools()->GetRenderTeeOffsetToRenderedTee(pIdleState, &OwnSkinInfo, OffsetToMid);
-	vec2 TeeRenderPos(Label.x + 30.0f, Label.y + Label.h / 2.0f + OffsetToMid.y);
-	int Emote = m_Dummy ? g_Config.m_ClDummyDefaultEyes : g_Config.m_ClPlayerDefaultEyes;
-	RenderTools()->RenderTee(pIdleState, &OwnSkinInfo, Emote, vec2(1, 0), TeeRenderPos);
-	Label.VSplitLeft(70.0f, 0, &Label);
-	Label.HMargin(15.0f, &Label);
+	char aBuf[128 + IO_MAX_PATH_LENGTH];
+	str_format(aBuf, sizeof(aBuf), "%s:", Localize("Your skin"));
+	Ui()->DoLabel(&Label, aBuf, 14.0f, TEXTALIGN_ML);
 
-	// default eyes
-	bool RenderEyesBelow = MainView.w < 750.0f;
-	if(RenderEyesBelow)
+	CSkins::CSkinList &SkinList = GameClient()->m_Skins.SkinList();
+	const CSkin *pDefaultSkin = GameClient()->m_Skins.Find("default");
+	const CSkins::CSkinContainer *pOwnSkinContainer = GameClient()->m_Skins.FindContainerOrNullptr(pSkinName[0] == '\0' ? "default" : pSkinName);
+	if(pOwnSkinContainer != nullptr && pOwnSkinContainer->IsSpecial())
 	{
-		Eyes.VSplitLeft(190.0f, 0, &Eyes);
-		Eyes.HSplitTop(105.0f, 0, &Eyes);
+		pOwnSkinContainer = nullptr; // Special skins cannot be selected, show as missing due to invalid name
 	}
-	else
+
+	CTeeRenderInfo OwnSkinInfo;
+	OwnSkinInfo.Apply(pOwnSkinContainer == nullptr || pOwnSkinContainer->Skin() == nullptr ? pDefaultSkin : pOwnSkinContainer->Skin().get());
+	OwnSkinInfo.ApplyColors(*pUseCustomColor, *pColorBody, *pColorFeet);
+	OwnSkinInfo.m_Size = 50.0f;
+
+	// Tee
 	{
-		Eyes = EyesRight;
-		if(MainView.w < 810.0f)
-			Eyes.VSplitRight(205.0f, 0, &Eyes);
-		Eyes.HSplitTop(50.0f, &Eyes, 0);
+		vec2 OffsetToMid;
+		CRenderTools::GetRenderTeeOffsetToRenderedTee(CAnimState::GetIdle(), &OwnSkinInfo, OffsetToMid);
+		const vec2 TeeRenderPos = vec2(YourSkin.x + YourSkin.w / 2.0f, YourSkin.y + YourSkin.h / 2.0f + OffsetToMid.y);
+		// tee looking towards cursor, and it is happy when you touch it
+		const vec2 DeltaPosition = Ui()->MousePos() - TeeRenderPos;
+		const float Distance = length(DeltaPosition);
+		const float InteractionDistance = 20.0f;
+		const vec2 TeeDirection = Distance < InteractionDistance ? normalize(vec2(DeltaPosition.x, maximum(DeltaPosition.y, 0.5f))) : normalize(DeltaPosition);
+		const int TeeEmote = Distance < InteractionDistance ? EMOTE_HAPPY : *pEmote;
+		RenderTools()->RenderTee(CAnimState::GetIdle(), &OwnSkinInfo, TeeEmote, TeeDirection, TeeRenderPos);
 	}
-	Eyes.HSplitTop(120.0f, &EyesLabel, &Eyes);
-	EyesLabel.VSplitLeft(20.0f, 0, &EyesLabel);
-	EyesLabel.HSplitTop(50.0f, &EyesLabel, &Eyes);
 
-	float Highlight = 0.0f;
-	static int s_aEyeButtons[6];
-	static int s_aEyesToolTip[6];
-	for(int CurrentEyeEmote = 0; CurrentEyeEmote < 6; CurrentEyeEmote++)
-	{
-		EyesLabel.VSplitLeft(10.0f, 0, &EyesLabel);
-		EyesLabel.VSplitLeft(50.0f, &EyesTee, &EyesLabel);
-
-		if(CurrentEyeEmote == 2 && !RenderEyesBelow)
+	// Skin loading status
+	const auto &&RenderSkinStatus = [&](CUIRect Parent, const CSkins::CSkinContainer *pSkinContainer, const void *pStatusTooltipId) {
+		if(pSkinContainer != nullptr && pSkinContainer->State() == CSkins::CSkinContainer::EState::LOADED)
 		{
-			Eyes.HSplitTop(60.0f, &EyesLabel, 0);
-			EyesLabel.HSplitTop(10.0f, 0, &EyesLabel);
+			return;
 		}
-		Highlight = (m_Dummy) ? g_Config.m_ClDummyDefaultEyes == CurrentEyeEmote : g_Config.m_ClPlayerDefaultEyes == CurrentEyeEmote;
-		if(DoButton_Menu(&s_aEyeButtons[CurrentEyeEmote], "", 0, &EyesTee, 0, CUI::CORNER_ALL, 10.0f, 0.0f, vec4(1, 1, 1, 0.5f + Highlight * 0.25f), vec4(1, 1, 1, 0.25f + Highlight * 0.25f)))
+
+		CUIRect StatusIcon;
+		Parent.HSplitTop(20.0f, &StatusIcon, nullptr);
+		StatusIcon.VSplitLeft(20.0f, &StatusIcon, nullptr);
+
+		if(pSkinContainer != nullptr &&
+			(pSkinContainer->State() == CSkins::CSkinContainer::EState::UNLOADED ||
+				pSkinContainer->State() == CSkins::CSkinContainer::EState::PENDING ||
+				pSkinContainer->State() == CSkins::CSkinContainer::EState::LOADING))
 		{
-			if(m_Dummy)
+			Ui()->RenderProgressSpinner(StatusIcon.Center(), 5.0f);
+		}
+		else
+		{
+			TextRender()->TextColor(ColorRGBA(1.0f, 0.0f, 0.0f, 1.0f));
+			TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+			TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
+			Ui()->DoLabel(&StatusIcon, pSkinContainer == nullptr || pSkinContainer->State() == CSkins::CSkinContainer::EState::ERROR ? FontIcon::TRIANGLE_EXCLAMATION : FontIcon::QUESTION, 12.0f, TEXTALIGN_MC);
+			TextRender()->SetRenderFlags(0);
+			TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+			TextRender()->TextColor(TextRender()->DefaultTextColor());
+			Ui()->DoButtonLogic(pStatusTooltipId, 0, &StatusIcon, BUTTONFLAG_NONE);
+			const char *pErrorTooltip;
+			if(pSkinContainer == nullptr)
 			{
-				g_Config.m_ClDummyDefaultEyes = CurrentEyeEmote;
-				if(g_Config.m_ClDummy)
-					GameClient()->m_Emoticon.EyeEmote(CurrentEyeEmote);
+				pErrorTooltip = Localize("This skin name cannot be used.");
+			}
+			else if(pSkinContainer->State() == CSkins::CSkinContainer::EState::ERROR)
+			{
+				pErrorTooltip = Localize("Skin could not be loaded due to an error. Check the local console for details.");
 			}
 			else
 			{
-				g_Config.m_ClPlayerDefaultEyes = CurrentEyeEmote;
-				if(!g_Config.m_ClDummy)
+				pErrorTooltip = Localize("Skin could not be found.");
+			}
+			GameClient()->m_Tooltips.DoToolTip(pStatusTooltipId, &StatusIcon, pErrorTooltip);
+		}
+	};
+	static char s_StatusTooltipId;
+	RenderSkinStatus(YourSkin, pOwnSkinContainer, &s_StatusTooltipId);
+
+	// Skin name
+	static CLineInput s_SkinInput;
+	s_SkinInput.SetBuffer(pSkinName, SkinNameSize);
+	s_SkinInput.SetEmptyText("default");
+	if(Ui()->DoClearableEditBox(&s_SkinInput, &Button, 14.0f))
+	{
+		SetNeedSendInfo();
+		m_SkinListScrollToSelected = true;
+		SkinList.ForceRefresh();
+	}
+
+	// Random skin button
+	static CButtonContainer s_RandomSkinButton;
+	static const char *s_apDice[] = {FontIcon::DICE_ONE, FontIcon::DICE_TWO, FontIcon::DICE_THREE, FontIcon::DICE_FOUR, FontIcon::DICE_FIVE, FontIcon::DICE_SIX};
+	static int s_CurrentDie = rand() % std::size(s_apDice);
+	TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+	TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
+	if(DoButton_Menu(&s_RandomSkinButton, s_apDice[s_CurrentDie], 0, &RandomSkinButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, -0.2f))
+	{
+		GameClient()->m_Skins.RandomizeSkin(m_Dummy);
+		SetNeedSendInfo();
+		m_SkinListScrollToSelected = true;
+		s_CurrentDie = rand() % std::size(s_apDice);
+	}
+	TextRender()->SetRenderFlags(0);
+	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+	GameClient()->m_Tooltips.DoToolTip(&s_RandomSkinButton, &RandomSkinButton, Localize("Create a random skin"));
+
+	// Custom colors button
+	if(DoButton_CheckBox(pUseCustomColor, Localize("Custom colors"), *pUseCustomColor, &CustomColorsButton))
+	{
+		*pUseCustomColor = *pUseCustomColor ? 0 : 1;
+		SetNeedSendInfo();
+	}
+
+	// Default eyes
+	{
+		CTeeRenderInfo EyeSkinInfo = OwnSkinInfo;
+		EyeSkinInfo.m_Size = EyeButtonSize;
+		vec2 OffsetToMid;
+		CRenderTools::GetRenderTeeOffsetToRenderedTee(CAnimState::GetIdle(), &EyeSkinInfo, OffsetToMid);
+
+		CUIRect EyesRow;
+		Eyes.HSplitTop(EyeButtonSize, &EyesRow, &Eyes);
+		static CButtonContainer s_aEyeButtons[NUM_EMOTES];
+		for(int CurrentEyeEmote = 0; CurrentEyeEmote < NUM_EMOTES; CurrentEyeEmote++)
+		{
+			EyesRow.VSplitLeft(EyeButtonSize, &Button, &EyesRow);
+			EyesRow.VSplitLeft(5.0f, nullptr, &EyesRow);
+			if(!RenderEyesBelow && (CurrentEyeEmote + 1) % 3 == 0)
+			{
+				Eyes.HSplitTop(5.0f, nullptr, &Eyes);
+				Eyes.HSplitTop(EyeButtonSize, &EyesRow, &Eyes);
+			}
+
+			const ColorRGBA EyeButtonColor = ColorRGBA(1.0f, 1.0f, 1.0f, 0.25f + (*pEmote == CurrentEyeEmote ? 0.25f : 0.0f));
+			if(DoButton_Menu(&s_aEyeButtons[CurrentEyeEmote], "", 0, &Button, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, EyeButtonColor))
+			{
+				*pEmote = CurrentEyeEmote;
+				if((int)m_Dummy == g_Config.m_ClDummy)
 					GameClient()->m_Emoticon.EyeEmote(CurrentEyeEmote);
 			}
+			GameClient()->m_Tooltips.DoToolTip(&s_aEyeButtons[CurrentEyeEmote], &Button, Localize("Choose default eyes when joining a server"));
+			RenderTools()->RenderTee(CAnimState::GetIdle(), &EyeSkinInfo, CurrentEyeEmote, vec2(1.0f, 0.0f), vec2(Button.x + Button.w / 2.0f, Button.y + Button.h / 2.0f + OffsetToMid.y));
 		}
-		GameClient()->m_Tooltips.DoToolTip(&s_aEyesToolTip[CurrentEyeEmote], &EyesTee, Localize("Choose default eyes when joining a server"));
-		RenderTools()->RenderTee(pIdleState, &OwnSkinInfo, CurrentEyeEmote, vec2(1, 0), vec2(EyesTee.x + 25.0f, EyesTee.y + EyesTee.h / 2.0f + OffsetToMid.y));
 	}
 
-	static float s_OffsetSkin = 0.0f;
-	static int s_ClearButton = 0;
-	SUIExEditBoxProperties EditProps;
-	EditProps.m_pEmptyText = "default";
-	if(UIEx()->DoClearableEditBox(pSkinName, &s_ClearButton, &Label, pSkinName, sizeof(g_Config.m_ClPlayerSkin), 14.0f, &s_OffsetSkin, false, CUI::CORNER_ALL, EditProps))
+	// Custom color pickers
+	MainView.HSplitTop(5.0f, nullptr, &MainView);
+	if(*pUseCustomColor)
 	{
-		SetNeedSendInfo();
-	}
-
-	// custom color selector
-	MainView.HSplitTop(20.0f + RenderEyesBelow * 25.0f, 0, &MainView);
-	MainView.HSplitTop(20.0f, &Button, &MainView);
-	Button.VSplitLeft(150.0f, &Button, 0);
-	static int s_CustomColorID = 0;
-	if(DoButton_CheckBox(&s_CustomColorID, Localize("Custom colors"), *UseCustomColor, &Button))
-	{
-		*UseCustomColor = *UseCustomColor ? 0 : 1;
-		SetNeedSendInfo();
-	}
-
-	MainView.HSplitTop(5.0f, 0, &MainView);
-	MainView.HSplitTop(82.5f, &Label, &MainView);
-	if(*UseCustomColor)
-	{
+		CUIRect CustomColors;
+		MainView.HSplitTop(95.0f, &CustomColors, &MainView);
 		CUIRect aRects[2];
-		Label.VSplitMid(&aRects[0], &aRects[1], 20.0f);
+		CustomColors.VSplitMid(&aRects[0], &aRects[1], 20.0f);
 
-		unsigned *paColors[2] = {ColorBody, ColorFeet};
-		const char *paParts[] = {Localize("Body"), Localize("Feet")};
+		unsigned *apColors[] = {pColorBody, pColorFeet};
+		const char *apParts[] = {Localize("Body"), Localize("Feet")};
 
 		for(int i = 0; i < 2; i++)
 		{
 			aRects[i].HSplitTop(20.0f, &Label, &aRects[i]);
-			UI()->DoLabel(&Label, paParts[i], 14.0f, TEXTALIGN_LEFT);
-			aRects[i].VSplitLeft(10.0f, 0, &aRects[i]);
-			aRects[i].HSplitTop(2.5f, 0, &aRects[i]);
-
-			unsigned PrevColor = *paColors[i];
-			RenderHSLScrollbars(&aRects[i], paColors[i], false, true);
-
-			if(PrevColor != *paColors[i])
+			Ui()->DoLabel(&Label, apParts[i], 14.0f, TEXTALIGN_ML);
+			if(RenderHslaScrollbars(&aRects[i], apColors[i], false, ColorHSLA::DARKEST_LGT))
 			{
 				SetNeedSendInfo();
 			}
 		}
 	}
+	MainView.HSplitTop(5.0f, nullptr, &MainView);
 
-	// skin selector
-	MainView.HSplitTop(20.0f, 0, &MainView);
-	MainView.HSplitTop(230.0f - RenderEyesBelow * 25.0f, &SkinList, &MainView);
-	static std::vector<CUISkin> s_vSkinList;
-	static int s_SkinCount = 0;
-	static float s_ScrollValue = 0.0f;
-	if(s_InitSkinlist || m_pClient->m_Skins.Num() != s_SkinCount)
-	{
-		s_vSkinList.clear();
-		for(int i = 0; i < m_pClient->m_Skins.Num(); ++i)
-		{
-			const CSkin *s = m_pClient->m_Skins.Get(i);
+	// Layout bottom controls and use remainder for skin selector
+	CUIRect QuickSearch, DatabaseButton, DirectoryButton, RefreshButton;
+	MainView.HSplitBottom(20.0f, &MainView, &QuickSearch);
+	MainView.HSplitBottom(5.0f, &MainView, nullptr);
+	QuickSearch.VSplitLeft(220.0f, &QuickSearch, &DatabaseButton);
+	DatabaseButton.VSplitLeft(10.0f, nullptr, &DatabaseButton);
+	DatabaseButton.VSplitLeft(150.0f, &DatabaseButton, &DirectoryButton);
+	DirectoryButton.VSplitRight(175.0f, nullptr, &DirectoryButton);
+	DirectoryButton.VSplitRight(25.0f, &DirectoryButton, &RefreshButton);
+	DirectoryButton.VSplitRight(10.0f, &DirectoryButton, nullptr);
 
-			// filter quick search
-			if(g_Config.m_ClSkinFilterString[0] != '\0' && !str_utf8_find_nocase(s->m_aName, g_Config.m_ClSkinFilterString))
-				continue;
-
-			// no special skins
-			if((s->m_aName[0] == 'x' && s->m_aName[1] == '_'))
-				continue;
-
-			// vanilla skins only
-			if(g_Config.m_ClVanillaSkinsOnly && !s->m_IsVanilla)
-				continue;
-
-			if(s == 0)
-				continue;
-
-			s_vSkinList.emplace_back(s);
-		}
-		std::sort(s_vSkinList.begin(), s_vSkinList.end());
-		s_InitSkinlist = false;
-		s_SkinCount = m_pClient->m_Skins.Num();
-	}
-
+	// Skin selector
+	static CListBox s_ListBox;
+	std::vector<CSkins::CSkinListEntry> &vSkinList = SkinList.Skins();
 	int OldSelected = -1;
-	UiDoListboxStart(&s_InitSkinlist, &SkinList, 50.0f, Localize("Skins"), "", s_vSkinList.size(), 4, OldSelected, s_ScrollValue);
-	for(size_t i = 0; i < s_vSkinList.size(); ++i)
+	s_ListBox.DoStart(50.0f, vSkinList.size(), 4, 2, OldSelected, &MainView);
+	for(size_t i = 0; i < vSkinList.size(); ++i)
 	{
-		const CSkin *s = s_vSkinList[i].m_pSkin;
+		CSkins::CSkinListEntry &SkinListEntry = vSkinList[i];
+		const CSkins::CSkinContainer *pSkinContainer = vSkinList[i].SkinContainer();
 
-		if(str_comp(s->m_aName, pSkinName) == 0)
-			OldSelected = i;
-
-		CListboxItem Item = UiDoListboxNextItem(s, OldSelected >= 0 && (size_t)OldSelected == i);
-		if(Item.m_Visible)
+		if(!m_Dummy ? SkinListEntry.IsSelectedMain() : SkinListEntry.IsSelectedDummy())
 		{
-			CTeeRenderInfo Info = OwnSkinInfo;
-			Info.m_CustomColoredSkin = *UseCustomColor;
-
-			Info.m_OriginalRenderSkin = s->m_OriginalSkin;
-			Info.m_ColorableRenderSkin = s->m_ColorableSkin;
-			Info.m_SkinMetrics = s->m_Metrics;
-
-			RenderTools()->GetRenderTeeOffsetToRenderedTee(pIdleState, &Info, OffsetToMid);
-			TeeRenderPos = vec2(Item.m_Rect.x + 30, Item.m_Rect.y + Item.m_Rect.h / 2 + OffsetToMid.y);
-			RenderTools()->RenderTee(pIdleState, &Info, Emote, vec2(1.0f, 0.0f), TeeRenderPos);
-
-			Item.m_Rect.VSplitLeft(60.0f, 0, &Item.m_Rect);
-			SLabelProperties Props;
-			Props.m_MaxWidth = Item.m_Rect.w;
-			UI()->DoLabel(&Item.m_Rect, s->m_aName, 12.0f, TEXTALIGN_LEFT, Props);
-			if(g_Config.m_Debug)
+			OldSelected = i;
+			if(m_SkinListScrollToSelected)
 			{
-				ColorRGBA BloodColor = *UseCustomColor ? color_cast<ColorRGBA>(ColorHSLA(*ColorBody)) : s->m_BloodColor;
-				Graphics()->TextureClear();
-				Graphics()->QuadsBegin();
-				Graphics()->SetColor(BloodColor.r, BloodColor.g, BloodColor.b, 1.0f);
-				IGraphics::CQuadItem QuadItem(Item.m_Rect.x, Item.m_Rect.y, 12.0f, 12.0f);
-				Graphics()->QuadsDrawTL(&QuadItem, 1);
-				Graphics()->QuadsEnd();
+				s_ListBox.ScrollToSelected();
+				m_SkinListScrollToSelected = false;
 			}
 		}
+
+		const CListboxItem Item = s_ListBox.DoNextItem(SkinListEntry.ListItemId(), OldSelected >= 0 && (size_t)OldSelected == i);
+		if(!Item.m_Visible)
+		{
+			continue;
+		}
+
+		SkinListEntry.RequestLoad();
+		const CSkin *pSkin = pSkinContainer->State() == CSkins::CSkinContainer::EState::LOADED ? pSkinContainer->Skin().get() : pDefaultSkin;
+
+		Item.m_Rect.VSplitLeft(60.0f, &Button, &Label);
+
+		{
+			CTeeRenderInfo Info = OwnSkinInfo;
+			Info.Apply(pSkin);
+			vec2 OffsetToMid;
+			CRenderTools::GetRenderTeeOffsetToRenderedTee(CAnimState::GetIdle(), &Info, OffsetToMid);
+			const vec2 TeeRenderPos = vec2(Button.x + Button.w / 2.0f, Button.y + Button.h / 2 + OffsetToMid.y);
+			RenderTools()->RenderTee(CAnimState::GetIdle(), &Info, *pEmote, vec2(1.0f, 0.0f), TeeRenderPos);
+		}
+
+		{
+			SLabelProperties Props;
+			Props.m_MaxWidth = Label.w - 5.0f;
+			const auto &NameMatch = SkinListEntry.NameMatch();
+			if(NameMatch.has_value())
+			{
+				const auto [MatchStart, MatchLength] = NameMatch.value();
+				Props.m_vColorSplits.emplace_back(MatchStart, MatchLength, ColorRGBA(0.4f, 0.4f, 1.0f, 1.0f));
+			}
+			Ui()->DoLabel(&Label, pSkinContainer->Name(), 12.0f, TEXTALIGN_ML, Props);
+		}
+
+		if(g_Config.m_Debug)
+		{
+			Graphics()->TextureClear();
+			Graphics()->QuadsBegin();
+			Graphics()->SetColor(*pUseCustomColor ? color_cast<ColorRGBA>(ColorHSLA(*pColorBody).UnclampLighting(ColorHSLA::DARKEST_LGT)) : pSkin->m_BloodColor);
+			IGraphics::CQuadItem QuadItem(Label.x, Label.y, 12.0f, 12.0f);
+			Graphics()->QuadsDrawTL(&QuadItem, 1);
+			Graphics()->QuadsEnd();
+		}
+
+		// render skin favorite icon
+		{
+			CUIRect FavIcon;
+			Item.m_Rect.HSplitTop(20.0f, &FavIcon, nullptr);
+			FavIcon.VSplitRight(20.0f, nullptr, &FavIcon);
+			if(DoButton_Favorite(SkinListEntry.FavoriteButtonId(), SkinListEntry.ListItemId(), SkinListEntry.IsFavorite(), &FavIcon))
+			{
+				if(SkinListEntry.IsFavorite())
+				{
+					GameClient()->m_Skins.RemoveFavorite(pSkinContainer->Name());
+				}
+				else
+				{
+					GameClient()->m_Skins.AddFavorite(pSkinContainer->Name());
+				}
+			}
+		}
+
+		RenderSkinStatus(Item.m_Rect, pSkinContainer, SkinListEntry.ErrorTooltipId());
 	}
 
-	const int NewSelected = UiDoListboxEnd(&s_ScrollValue, 0);
+	const int NewSelected = s_ListBox.DoEnd();
 	if(OldSelected != NewSelected)
 	{
-		mem_copy(pSkinName, s_vSkinList[NewSelected].m_pSkin->m_aName, sizeof(g_Config.m_ClPlayerSkin));
+		str_copy(pSkinName, vSkinList[NewSelected].SkinContainer()->Name(), SkinNameSize);
+		SkinList.ForceRefresh();
 		SetNeedSendInfo();
 	}
 
-	// render quick search
+	static CLineInput s_SkinFilterInput(g_Config.m_ClSkinFilterString, sizeof(g_Config.m_ClSkinFilterString));
+	if(SkinList.UnfilteredCount() > 0 && vSkinList.empty())
 	{
-		MainView.HSplitBottom(ms_ButtonHeight, &MainView, &QuickSearch);
-		QuickSearch.VSplitLeft(240.0f, &QuickSearch, &SkinDB);
-		QuickSearch.HSplitTop(5.0f, 0, &QuickSearch);
-		const char *pSearchLabel = "\xEF\x80\x82";
-		TextRender()->SetCurFont(TextRender()->GetFont(TEXT_FONT_ICON_FONT));
-		TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
-
-		SLabelProperties Props;
-		Props.m_AlignVertically = 0;
-		UI()->DoLabel(&QuickSearch, pSearchLabel, 14.0f, TEXTALIGN_LEFT, Props);
-		float wSearch = TextRender()->TextWidth(0, 14.0f, pSearchLabel, -1, -1.0f);
-		TextRender()->SetRenderFlags(0);
-		TextRender()->SetCurFont(NULL);
-		QuickSearch.VSplitLeft(wSearch, 0, &QuickSearch);
-		QuickSearch.VSplitLeft(5.0f, 0, &QuickSearch);
-		QuickSearch.VSplitLeft(QuickSearch.w - 15.0f, &QuickSearch, &QuickSearchClearButton);
-		static int s_ClearButtonSearch = 0;
-		static float s_Offset = 0.0f;
-		SUIExEditBoxProperties EditPropsSearch;
-		if(Input()->KeyPress(KEY_F) && Input()->ModifierIsPressed())
+		CUIRect FilterLabel, ResetButton;
+		MainView.HMargin((MainView.h - (16.0f + 18.0f + 8.0f)) / 2.0f, &FilterLabel);
+		FilterLabel.HSplitTop(16.0f, &FilterLabel, &ResetButton);
+		ResetButton.HSplitTop(8.0f, nullptr, &ResetButton);
+		ResetButton.VMargin((ResetButton.w - 200.0f) / 2.0f, &ResetButton);
+		Ui()->DoLabel(&FilterLabel, Localize("No skins match your filter criteria"), 16.0f, TEXTALIGN_MC);
+		static CButtonContainer s_ResetButton;
+		if(DoButton_Menu(&s_ResetButton, Localize("Reset filter"), 0, &ResetButton))
 		{
-			UI()->SetActiveItem(&g_Config.m_ClSkinFilterString);
-
-			EditPropsSearch.m_SelectText = true;
-		}
-		EditPropsSearch.m_pEmptyText = Localize("Search");
-		if(UIEx()->DoClearableEditBox(&g_Config.m_ClSkinFilterString, &s_ClearButtonSearch, &QuickSearch, g_Config.m_ClSkinFilterString, sizeof(g_Config.m_ClSkinFilterString), 14.0f, &s_Offset, false, CUI::CORNER_ALL, EditPropsSearch))
-			s_InitSkinlist = true;
-	}
-
-	SkinDB.VSplitLeft(150.0f, &SkinDB, &DirectoryButton);
-	SkinDB.HSplitTop(5.0f, 0, &SkinDB);
-	static int s_SkinDBDirID = 0;
-	if(DoButton_Menu(&s_SkinDBDirID, Localize("Skin Database"), 0, &SkinDB))
-	{
-		if(!open_link("https://ddnet.tw/skins/"))
-		{
-			dbg_msg("menus", "couldn't open link");
+			s_SkinFilterInput.Clear();
+			SkinList.ForceRefresh();
 		}
 	}
 
-	DirectoryButton.HSplitTop(5.0f, 0, &DirectoryButton);
-	DirectoryButton.VSplitRight(175.0f, 0, &DirectoryButton);
-	DirectoryButton.VSplitRight(25.0f, &DirectoryButton, &RefreshButton);
-	DirectoryButton.VSplitRight(10.0f, &DirectoryButton, 0);
-	static int s_DirectoryButtonID = 0;
-	if(DoButton_Menu(&s_DirectoryButtonID, Localize("Skins directory"), 0, &DirectoryButton))
+	if(Ui()->DoEditBox_Search(&s_SkinFilterInput, &QuickSearch, 14.0f, !Ui()->IsPopupOpen() && !GameClient()->m_GameConsole.IsActive()))
+	{
+		SkinList.ForceRefresh();
+	}
+
+	static CButtonContainer s_SkinDatabaseButton;
+	if(DoButton_Menu(&s_SkinDatabaseButton, Localize("Skin Database"), 0, &DatabaseButton))
+	{
+		Client()->ViewLink("https://ddnet.org/skins/");
+	}
+
+	static CButtonContainer s_DirectoryButton;
+	if(DoButton_Menu(&s_DirectoryButton, Localize("Skins directory"), 0, &DirectoryButton))
 	{
 		Storage()->GetCompletePath(IStorage::TYPE_SAVE, "skins", aBuf, sizeof(aBuf));
 		Storage()->CreateFolder("skins", IStorage::TYPE_SAVE);
-		if(!open_file(aBuf))
-		{
-			dbg_msg("menus", "couldn't open file");
-		}
+		Client()->ViewFile(aBuf);
 	}
+	GameClient()->m_Tooltips.DoToolTip(&s_DirectoryButton, &DirectoryButton, Localize("Open the directory to add custom skins"));
 
-	TextRender()->SetCurFont(TextRender()->GetFont(TEXT_FONT_ICON_FONT));
-	TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
-	static int s_SkinRefreshButtonID = 0;
-	if(DoButton_Menu(&s_SkinRefreshButtonID, "\xEF\x80\x9E", 0, &RefreshButton, NULL, 15, 5, 0, vec4(1.0f, 1.0f, 1.0f, 0.75f), vec4(1, 1, 1, 0.5f), 0))
+	TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+	TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
+	static CButtonContainer s_SkinRefreshButton;
+	if(DoButton_Menu(&s_SkinRefreshButton, FontIcon::ARROW_ROTATE_RIGHT, 0, &RefreshButton) || Input()->KeyPress(KEY_F5) || (Input()->KeyPress(KEY_R) && Input()->ModifierIsPressed()))
 	{
-		// reset render flags for possible loading screen
-		TextRender()->SetRenderFlags(0);
-		TextRender()->SetCurFont(NULL);
-		auto SkinStartLoadTime = time_get_nanoseconds();
-		m_pClient->m_Skins.Refresh([&](int) {
-			// if skin refreshing takes to long, swap to a loading screen
-			if(time_get_nanoseconds() - SkinStartLoadTime > 500ms)
-			{
-				RenderLoading(false, false);
-			}
-		});
-		s_InitSkinlist = true;
-		if(Client()->State() >= IClient::STATE_ONLINE)
-		{
-			m_pClient->RefindSkins();
-		}
+		ShouldRefresh = true;
 	}
 	TextRender()->SetRenderFlags(0);
-	TextRender()->SetCurFont(NULL);
-}
+	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
 
-typedef struct
-{
-	CLocConstString m_Name;
-	const char *m_pCommand;
-	int m_KeyId;
-	int m_ModifierCombination;
-} CKeyInfo;
-
-static CKeyInfo gs_aKeys[] =
+	if(ShouldRefresh)
 	{
-		{"Move left", "+left", 0, 0}, // Localize - these strings are localized within CLocConstString
-		{"Move right", "+right", 0, 0},
-		{"Jump", "+jump", 0, 0},
-		{"Fire", "+fire", 0, 0},
-		{"Hook", "+hook", 0, 0},
-		{"Hook collisions", "+showhookcoll", 0, 0},
-		{"Pause", "say /pause", 0, 0},
-		{"Kill", "kill", 0, 0},
-		{"Zoom in", "zoom+", 0, 0},
-		{"Zoom out", "zoom-", 0, 0},
-		{"Default zoom", "zoom", 0, 0},
-		{"Show others", "say /showothers", 0, 0},
-		{"Show all", "say /showall", 0, 0},
-		{"Toggle dyncam", "toggle cl_dyncam 0 1", 0, 0},
-		{"Toggle ghost", "toggle cl_race_show_ghost 0 1", 0, 0},
-
-		{"Hammer", "+weapon1", 0, 0},
-		{"Pistol", "+weapon2", 0, 0},
-		{"Shotgun", "+weapon3", 0, 0},
-		{"Grenade", "+weapon4", 0, 0},
-		{"Laser", "+weapon5", 0, 0},
-		{"Next weapon", "+nextweapon", 0, 0},
-		{"Prev. weapon", "+prevweapon", 0, 0},
-
-		{"Vote yes", "vote yes", 0, 0},
-		{"Vote no", "vote no", 0, 0},
-
-		{"Chat", "+show_chat; chat all", 0, 0},
-		{"Team chat", "+show_chat; chat team", 0, 0},
-		{"Converse", "+show_chat; chat all /c ", 0, 0},
-		{"Chat command", "+show_chat; chat all /", 0, 0},
-		{"Show chat", "+show_chat", 0, 0},
-
-		{"Toggle dummy", "toggle cl_dummy 0 1", 0, 0},
-		{"Dummy copy", "toggle cl_dummy_copy_moves 0 1", 0, 0},
-		{"Hammerfly dummy", "toggle cl_dummy_hammer 0 1", 0, 0},
-
-		{"Emoticon", "+emote", 0, 0},
-		{"Spectator mode", "+spectate", 0, 0},
-		{"Spectate next", "spectate_next", 0, 0},
-		{"Spectate previous", "spectate_previous", 0, 0},
-		{"Console", "toggle_local_console", 0, 0},
-		{"Remote console", "toggle_remote_console", 0, 0},
-		{"Screenshot", "screenshot", 0, 0},
-		{"Scoreboard", "+scoreboard", 0, 0},
-		{"Statboard", "+statboard", 0, 0},
-		{"Lock team", "say /lock", 0, 0},
-		{"Show entities", "toggle cl_overlay_entities 0 100", 0, 0},
-		{"Show HUD", "toggle cl_showhud 0 1", 0, 0},
-};
-
-/*	This is for scripts/languages to work, don't remove!
-	Localize("Move left");Localize("Move right");Localize("Jump");Localize("Fire");Localize("Hook");
-	Localize("Hook collisions");Localize("Pause");Localize("Kill");Localize("Zoom in");Localize("Zoom out");
-	Localize("Default zoom");Localize("Show others");Localize("Show all");Localize("Toggle dyncam");
-	Localize("Toggle dummy");Localize("Toggle ghost");Localize("Dummy copy");Localize("Hammerfly dummy");
-	Localize("Hammer");Localize("Pistol");Localize("Shotgun");Localize("Grenade");Localize("Laser");
-	Localize("Next weapon");Localize("Prev. weapon");Localize("Vote yes");Localize("Vote no");
-	Localize("Chat");Localize("Team chat");Localize("Converse");Localize("Show chat");Localize("Emoticon");
-	Localize("Spectator mode");Localize("Spectate next");Localize("Spectate previous");Localize("Console");
-	Localize("Remote console");Localize("Screenshot");Localize("Scoreboard");Localize("Statboard");
-	Localize("Lock team");Localize("Show entities");Localize("Show HUD");Localize("Chat command");
-*/
-
-void CMenus::DoSettingsControlsButtons(int Start, int Stop, CUIRect View)
-{
-	for(int i = Start; i < Stop; i++)
-	{
-		CKeyInfo &Key = gs_aKeys[i];
-		CUIRect Button, Label;
-		View.HSplitTop(20.0f, &Button, &View);
-		Button.VSplitLeft(135.0f, &Label, &Button);
-
-		char aBuf[64];
-		str_format(aBuf, sizeof(aBuf), "%s:", Localize((const char *)Key.m_Name));
-
-		UI()->DoLabel(&Label, aBuf, 13.0f, TEXTALIGN_LEFT);
-		int OldId = Key.m_KeyId, OldModifierCombination = Key.m_ModifierCombination, NewModifierCombination;
-		int NewId = DoKeyReader((void *)&Key.m_Name, &Button, OldId, OldModifierCombination, &NewModifierCombination);
-		if(NewId != OldId || NewModifierCombination != OldModifierCombination)
-		{
-			if(OldId != 0 || NewId == 0)
-				m_pClient->m_Binds.Bind(OldId, "", false, OldModifierCombination);
-			if(NewId != 0)
-				m_pClient->m_Binds.Bind(NewId, gs_aKeys[i].m_pCommand, false, NewModifierCombination);
-		}
-
-		View.HSplitTop(2.0f, 0, &View);
-	}
-}
-
-float CMenus::RenderSettingsControlsJoystick(CUIRect View)
-{
-	bool JoystickEnabled = g_Config.m_InpControllerEnable;
-	int NumJoysticks = Input()->NumJoysticks();
-	int NumOptions = 1; // expandable header
-	if(JoystickEnabled)
-	{
-		if(NumJoysticks == 0)
-			NumOptions++; // message
-		else
-		{
-			if(NumJoysticks > 1)
-				NumOptions++; // joystick selection
-			NumOptions += 3; // mode, ui sens, tolerance
-			if(!g_Config.m_InpControllerAbsolute)
-				NumOptions++; // ingame sens
-			NumOptions += Input()->GetActiveJoystick()->GetNumAxes() + 1; // axis selection + header
-		}
-	}
-	const float ButtonHeight = 20.0f;
-	const float Spacing = 2.0f;
-	const float BackgroundHeight = NumOptions * (ButtonHeight + Spacing) + (NumOptions == 1 ? 0 : Spacing);
-	if(View.h < BackgroundHeight)
-		return BackgroundHeight; // TODO: make this less hacky by porting CScrollRegion from vanilla
-
-	View.HSplitTop(BackgroundHeight, &View, 0);
-
-	CUIRect Button;
-	View.HSplitTop(Spacing, 0, &View);
-	View.HSplitTop(ButtonHeight, &Button, &View);
-	if(DoButton_CheckBox(&g_Config.m_InpControllerEnable, Localize("Enable controller"), g_Config.m_InpControllerEnable, &Button))
-	{
-		g_Config.m_InpControllerEnable ^= 1;
-	}
-	if(JoystickEnabled)
-	{
-		if(NumJoysticks > 0)
-		{
-			// show joystick device selection if more than one available
-			if(NumJoysticks > 1)
-			{
-				View.HSplitTop(Spacing, 0, &View);
-				View.HSplitTop(ButtonHeight, &Button, &View);
-				static int s_ButtonJoystickId;
-				char aBuf[96];
-				str_format(aBuf, sizeof(aBuf), Localize("Controller %d: %s"), Input()->GetActiveJoystick()->GetIndex(), Input()->GetActiveJoystick()->GetName());
-				if(DoButton_Menu(&s_ButtonJoystickId, aBuf, 0, &Button))
-					Input()->SelectNextJoystick();
-				GameClient()->m_Tooltips.DoToolTip(&s_ButtonJoystickId, &Button, Localize("Click to cycle through all available controllers."));
-			}
-
-			{
-				View.HSplitTop(Spacing, 0, &View);
-				View.HSplitTop(ButtonHeight, &Button, &View);
-				const char *apLabels[] = {Localize("Relative", "Ingame controller mode"), Localize("Absolute", "Ingame controller mode")};
-				UIEx()->DoScrollbarOptionLabeled(&g_Config.m_InpControllerAbsolute, &g_Config.m_InpControllerAbsolute, &Button, Localize("Ingame controller mode"), apLabels, std::size(apLabels));
-			}
-
-			if(!g_Config.m_InpControllerAbsolute)
-			{
-				View.HSplitTop(Spacing, 0, &View);
-				View.HSplitTop(ButtonHeight, &Button, &View);
-				UIEx()->DoScrollbarOption(&g_Config.m_InpControllerSens, &g_Config.m_InpControllerSens, &Button, Localize("Ingame controller sens."), 1, 500, &CUIEx::ms_LogarithmicScrollbarScale, CUIEx::SCROLLBAR_OPTION_NOCLAMPVALUE);
-			}
-
-			View.HSplitTop(Spacing, 0, &View);
-			View.HSplitTop(ButtonHeight, &Button, &View);
-			UIEx()->DoScrollbarOption(&g_Config.m_UiControllerSens, &g_Config.m_UiControllerSens, &Button, Localize("UI controller sens."), 1, 500, &CUIEx::ms_LogarithmicScrollbarScale, CUIEx::SCROLLBAR_OPTION_NOCLAMPVALUE);
-
-			View.HSplitTop(Spacing, 0, &View);
-			View.HSplitTop(ButtonHeight, &Button, &View);
-			UIEx()->DoScrollbarOption(&g_Config.m_InpControllerTolerance, &g_Config.m_InpControllerTolerance, &Button, Localize("Controller jitter tolerance"), 0, 50);
-
-			View.HSplitTop(Spacing, 0, &View);
-			RenderTools()->DrawUIRect(&View, ColorRGBA(0.0f, 0.0f, 0.0f, 0.125f), CUI::CORNER_ALL, 5.0f);
-			DoJoystickAxisPicker(View);
-		}
-		else
-		{
-			View.HSplitTop((View.h - ButtonHeight) / 2.0f, 0, &View);
-			View.HSplitTop(ButtonHeight, &Button, &View);
-			UI()->DoLabel(&Button, Localize("No controller found. Plug in a controller and restart the game."), 13.0f, TEXTALIGN_CENTER);
-		}
-	}
-
-	return BackgroundHeight;
-}
-
-void CMenus::DoJoystickAxisPicker(CUIRect View)
-{
-	float ButtonHeight = 20.0f;
-	float Spacing = 2.0f;
-	float DeviceLabelWidth = View.w * 0.30f;
-	float StatusWidth = View.w * 0.30f;
-	float BindWidth = View.w * 0.1f;
-	float StatusMargin = View.w * 0.05f;
-
-	CUIRect Row, Button;
-	View.HSplitTop(Spacing, 0, &View);
-	View.HSplitTop(ButtonHeight, &Row, &View);
-	Row.VSplitLeft(StatusWidth, &Button, &Row);
-	UI()->DoLabel(&Button, Localize("Device"), 13.0f, TEXTALIGN_CENTER);
-	Row.VSplitLeft(StatusMargin, 0, &Row);
-	Row.VSplitLeft(StatusWidth, &Button, &Row);
-	UI()->DoLabel(&Button, Localize("Status"), 13.0f, TEXTALIGN_CENTER);
-	Row.VSplitLeft(2 * StatusMargin, 0, &Row);
-	Row.VSplitLeft(2 * BindWidth, &Button, &Row);
-	UI()->DoLabel(&Button, Localize("Aim bind"), 13.0f, TEXTALIGN_CENTER);
-
-	IInput::IJoystick *pJoystick = Input()->GetActiveJoystick();
-	static int s_aActive[NUM_JOYSTICK_AXES][2];
-	for(int i = 0; i < minimum<int>(pJoystick->GetNumAxes(), NUM_JOYSTICK_AXES); i++)
-	{
-		bool Active = g_Config.m_InpControllerX == i || g_Config.m_InpControllerY == i;
-
-		View.HSplitTop(Spacing, 0, &View);
-		View.HSplitTop(ButtonHeight, &Row, &View);
-		RenderTools()->DrawUIRect(&Row, ColorRGBA(0.0f, 0.0f, 0.0f, 0.125f), CUI::CORNER_ALL, 5.0f);
-
-		// Device label
-		Row.VSplitLeft(DeviceLabelWidth, &Button, &Row);
-		char aBuf[64];
-		str_format(aBuf, sizeof(aBuf), Localize("Controller Axis #%d"), i + 1);
-		if(!Active)
-			TextRender()->TextColor(0.7f, 0.7f, 0.7f, 1.0f);
-		else
-			TextRender()->TextColor(TextRender()->DefaultTextColor());
-		UI()->DoLabel(&Button, aBuf, 13.0f, TEXTALIGN_CENTER);
-
-		// Device status
-		Row.VSplitLeft(StatusMargin, 0, &Row);
-		Row.VSplitLeft(StatusWidth, &Button, &Row);
-		Button.HMargin((ButtonHeight - 14.0f) / 2.0f, &Button);
-		DoJoystickBar(&Button, (pJoystick->GetAxisValue(i) + 1.0f) / 2.0f, g_Config.m_InpControllerTolerance / 50.0f, Active);
-
-		// Bind to X,Y
-		Row.VSplitLeft(2 * StatusMargin, 0, &Row);
-		Row.VSplitLeft(BindWidth, &Button, &Row);
-		if(DoButton_CheckBox(&s_aActive[i][0], "X", g_Config.m_InpControllerX == i, &Button))
-		{
-			if(g_Config.m_InpControllerY == i)
-				g_Config.m_InpControllerY = g_Config.m_InpControllerX;
-			g_Config.m_InpControllerX = i;
-		}
-		Row.VSplitLeft(BindWidth, &Button, &Row);
-		if(DoButton_CheckBox(&s_aActive[i][1], "Y", g_Config.m_InpControllerY == i, &Button))
-		{
-			if(g_Config.m_InpControllerX == i)
-				g_Config.m_InpControllerX = g_Config.m_InpControllerY;
-			g_Config.m_InpControllerY = i;
-		}
-		Row.VSplitLeft(StatusMargin, 0, &Row);
-	}
-	TextRender()->TextColor(TextRender()->DefaultTextColor());
-}
-
-void CMenus::DoJoystickBar(const CUIRect *pRect, float Current, float Tolerance, bool Active)
-{
-	CUIRect Handle;
-	pRect->VSplitLeft(7.0f, &Handle, 0); // Slider size
-
-	Handle.x += (pRect->w - Handle.w) * Current;
-
-	CUIRect Rail;
-	pRect->HMargin(4.0f, &Rail);
-	RenderTools()->DrawUIRect(&Rail, ColorRGBA(1.0f, 1.0f, 1.0f, Active ? 0.25f : 0.125f), CUI::CORNER_ALL, Rail.h / 2.0f);
-
-	CUIRect ToleranceArea = Rail;
-	ToleranceArea.w *= Tolerance;
-	ToleranceArea.x += (Rail.w - ToleranceArea.w) / 2.0f;
-	ColorRGBA ToleranceColor = Active ? ColorRGBA(0.8f, 0.35f, 0.35f, 1.0f) : ColorRGBA(0.7f, 0.5f, 0.5f, 1.0f);
-	RenderTools()->DrawUIRect(&ToleranceArea, ToleranceColor, CUI::CORNER_ALL, ToleranceArea.h / 2.0f);
-
-	CUIRect Slider = Handle;
-	Slider.HMargin(4.0f, &Slider);
-	ColorRGBA SliderColor = Active ? ColorRGBA(0.95f, 0.95f, 0.95f, 1.0f) : ColorRGBA(0.8f, 0.8f, 0.8f, 1.0f);
-	RenderTools()->DrawUIRect(&Slider, SliderColor, CUI::CORNER_ALL, Slider.h / 2.0f);
-}
-
-void CMenus::RenderSettingsControls(CUIRect MainView)
-{
-	// this is kinda slow, but whatever
-	for(auto &Key : gs_aKeys)
-		Key.m_KeyId = Key.m_ModifierCombination = 0;
-
-	for(int Mod = 0; Mod < CBinds::MODIFIER_COMBINATION_COUNT; Mod++)
-	{
-		for(int KeyId = 0; KeyId < KEY_LAST; KeyId++)
-		{
-			const char *pBind = m_pClient->m_Binds.Get(KeyId, Mod);
-			if(!pBind[0])
-				continue;
-
-			for(auto &Key : gs_aKeys)
-				if(str_comp(pBind, Key.m_pCommand) == 0)
-				{
-					Key.m_KeyId = KeyId;
-					Key.m_ModifierCombination = Mod;
-					break;
-				}
-		}
-	}
-
-	// controls in a scrollable listbox
-	static int s_ControlsList = 0;
-	static int s_SelectedControl = -1;
-	static float s_ScrollValue = 0;
-	static int s_OldSelected = 0;
-	static float s_JoystickSettingsHeight = 0.0f; // we calculate this later and don't render until enough space is available
-	// Hacky values: Size of 10.0f per item for smoother scrolling, 72 elements
-	// fits the current size of controls settings
-	const float PseudoItemSize = 10.0f;
-	UiDoListboxStart(&s_ControlsList, &MainView, PseudoItemSize, Localize("Controls"), "", 72 + (int)ceilf(s_JoystickSettingsHeight / PseudoItemSize + 0.5f), 1, s_SelectedControl, s_ScrollValue);
-
-	CUIRect MouseSettings, MovementSettings, WeaponSettings, VotingSettings, ChatSettings, DummySettings, MiscSettings, JoystickSettings, ResetButton;
-	CListboxItem Item = UiDoListboxNextItem(&s_OldSelected, false, false, true);
-	Item.m_Rect.HSplitTop(10.0f, 0, &Item.m_Rect);
-	Item.m_Rect.VSplitMid(&MouseSettings, &VotingSettings);
-
-	const float FontSize = 14.0f;
-	const float Margin = 10.0f;
-	const float HeaderHeight = FontSize + 5.0f + Margin;
-
-	// mouse settings
-	{
-		MouseSettings.VMargin(5.0f, &MouseSettings);
-		MouseSettings.HSplitTop(80.0f, &MouseSettings, &JoystickSettings);
-		RenderTools()->DrawUIRect(&MouseSettings, ColorRGBA(1, 1, 1, 0.25f), CUI::CORNER_ALL, 10.0f);
-		MouseSettings.VMargin(10.0f, &MouseSettings);
-
-		TextRender()->Text(0, MouseSettings.x, MouseSettings.y + (HeaderHeight - FontSize) / 2.f, FontSize, Localize("Mouse"), -1.0f);
-
-		MouseSettings.HSplitTop(HeaderHeight, 0, &MouseSettings);
-
-		CUIRect Button;
-		MouseSettings.HSplitTop(20.0f, &Button, &MouseSettings);
-		UIEx()->DoScrollbarOption(&g_Config.m_InpMousesens, &g_Config.m_InpMousesens, &Button, Localize("Ingame mouse sens."), 1, 500, &CUIEx::ms_LogarithmicScrollbarScale, CUIEx::SCROLLBAR_OPTION_NOCLAMPVALUE);
-
-		MouseSettings.HSplitTop(2.0f, 0, &MouseSettings);
-
-		MouseSettings.HSplitTop(20.0f, &Button, &MouseSettings);
-		UIEx()->DoScrollbarOption(&g_Config.m_UiMousesens, &g_Config.m_UiMousesens, &Button, Localize("UI mouse sens."), 1, 500, &CUIEx::ms_LogarithmicScrollbarScale, CUIEx::SCROLLBAR_OPTION_NOCLAMPVALUE);
-	}
-
-	// joystick settings
-	{
-		JoystickSettings.HSplitTop(Margin, 0, &JoystickSettings);
-		JoystickSettings.HSplitTop(s_JoystickSettingsHeight, &JoystickSettings, &MovementSettings);
-		RenderTools()->DrawUIRect(&JoystickSettings, ColorRGBA(1, 1, 1, 0.25f), CUI::CORNER_ALL, 10.0f);
-		JoystickSettings.VMargin(Margin, &JoystickSettings);
-
-		TextRender()->Text(0, JoystickSettings.x, JoystickSettings.y + (HeaderHeight - FontSize) / 2.f, FontSize, Localize("Controller"), -1.0f);
-
-		JoystickSettings.HSplitTop(HeaderHeight, 0, &JoystickSettings);
-		s_JoystickSettingsHeight = RenderSettingsControlsJoystick(JoystickSettings) + HeaderHeight + Margin; // + Margin for another bottom margin
-	}
-
-	// movement settings
-	{
-		MovementSettings.HSplitTop(Margin, 0, &MovementSettings);
-		MovementSettings.HSplitTop(365.0f, &MovementSettings, &WeaponSettings);
-		RenderTools()->DrawUIRect(&MovementSettings, ColorRGBA(1, 1, 1, 0.25f), CUI::CORNER_ALL, 10.0f);
-		MovementSettings.VMargin(Margin, &MovementSettings);
-
-		TextRender()->Text(0, MovementSettings.x, MovementSettings.y + (HeaderHeight - FontSize) / 2.f, FontSize, Localize("Movement"), -1.0f);
-
-		MovementSettings.HSplitTop(HeaderHeight, 0, &MovementSettings);
-		DoSettingsControlsButtons(0, 15, MovementSettings);
-	}
-
-	// weapon settings
-	{
-		WeaponSettings.HSplitTop(Margin, 0, &WeaponSettings);
-		WeaponSettings.HSplitTop(190.0f, &WeaponSettings, &ResetButton);
-		RenderTools()->DrawUIRect(&WeaponSettings, ColorRGBA(1, 1, 1, 0.25f), CUI::CORNER_ALL, 10.0f);
-		WeaponSettings.VMargin(Margin, &WeaponSettings);
-
-		TextRender()->Text(0, WeaponSettings.x, WeaponSettings.y + (HeaderHeight - FontSize) / 2.f, FontSize, Localize("Weapon"), -1.0f);
-
-		WeaponSettings.HSplitTop(HeaderHeight, 0, &WeaponSettings);
-		DoSettingsControlsButtons(15, 22, WeaponSettings);
-	}
-
-	// defaults
-	{
-		ResetButton.HSplitTop(Margin, 0, &ResetButton);
-		ResetButton.HSplitTop(40.0f, &ResetButton, 0);
-		RenderTools()->DrawUIRect(&ResetButton, ColorRGBA(1, 1, 1, 0.25f), CUI::CORNER_ALL, 10.0f);
-		ResetButton.HMargin(10.0f, &ResetButton);
-		ResetButton.VMargin(30.0f, &ResetButton);
-		ResetButton.HSplitTop(20.0f, &ResetButton, 0);
-		static int s_DefaultButton = 0;
-		if(DoButton_Menu((void *)&s_DefaultButton, Localize("Reset to defaults"), 0, &ResetButton))
-		{
-			m_pClient->m_Binds.SetDefaults();
-
-			g_Config.m_InpMousesens = 200;
-			g_Config.m_UiMousesens = 200;
-
-			g_Config.m_InpControllerEnable = 0;
-			g_Config.m_InpControllerGUID[0] = '\0';
-			g_Config.m_InpControllerAbsolute = 0;
-			g_Config.m_InpControllerSens = 100;
-			g_Config.m_InpControllerX = 0;
-			g_Config.m_InpControllerY = 1;
-			g_Config.m_InpControllerTolerance = 5;
-			g_Config.m_UiControllerSens = 100;
-		}
-	}
-
-	// voting settings
-	{
-		VotingSettings.VMargin(5.0f, &VotingSettings);
-		VotingSettings.HSplitTop(80.0f, &VotingSettings, &ChatSettings);
-		RenderTools()->DrawUIRect(&VotingSettings, ColorRGBA(1, 1, 1, 0.25f), CUI::CORNER_ALL, 10.0f);
-		VotingSettings.VMargin(Margin, &VotingSettings);
-
-		TextRender()->Text(0, VotingSettings.x, VotingSettings.y + (HeaderHeight - FontSize) / 2.f, FontSize, Localize("Voting"), -1.0f);
-
-		VotingSettings.HSplitTop(HeaderHeight, 0, &VotingSettings);
-		DoSettingsControlsButtons(22, 24, VotingSettings);
-	}
-
-	// chat settings
-	{
-		ChatSettings.HSplitTop(Margin, 0, &ChatSettings);
-		ChatSettings.HSplitTop(145.0f, &ChatSettings, &DummySettings);
-		RenderTools()->DrawUIRect(&ChatSettings, ColorRGBA(1, 1, 1, 0.25f), CUI::CORNER_ALL, 10.0f);
-		ChatSettings.VMargin(Margin, &ChatSettings);
-
-		TextRender()->Text(0, ChatSettings.x, ChatSettings.y + (HeaderHeight - FontSize) / 2.f, FontSize, Localize("Chat"), -1.0f);
-
-		ChatSettings.HSplitTop(HeaderHeight, 0, &ChatSettings);
-		DoSettingsControlsButtons(24, 29, ChatSettings);
-	}
-
-	// dummy settings
-	{
-		DummySettings.HSplitTop(Margin, 0, &DummySettings);
-		DummySettings.HSplitTop(100.0f, &DummySettings, &MiscSettings);
-		RenderTools()->DrawUIRect(&DummySettings, ColorRGBA(1, 1, 1, 0.25f), CUI::CORNER_ALL, 10.0f);
-		DummySettings.VMargin(Margin, &DummySettings);
-
-		TextRender()->Text(0, DummySettings.x, DummySettings.y + (HeaderHeight - FontSize) / 2.f, FontSize, Localize("Dummy"), -1.0f);
-
-		DummySettings.HSplitTop(HeaderHeight, 0, &DummySettings);
-		DoSettingsControlsButtons(29, 32, DummySettings);
-	}
-
-	// misc settings
-	{
-		MiscSettings.HSplitTop(Margin, 0, &MiscSettings);
-		MiscSettings.HSplitTop(300.0f, &MiscSettings, 0);
-		RenderTools()->DrawUIRect(&MiscSettings, ColorRGBA(1, 1, 1, 0.25f), CUI::CORNER_ALL, 10.0f);
-		MiscSettings.VMargin(Margin, &MiscSettings);
-
-		TextRender()->Text(0, MiscSettings.x, MiscSettings.y + (HeaderHeight - FontSize) / 2.f, FontSize, Localize("Miscellaneous"), -1.0f);
-
-		MiscSettings.HSplitTop(HeaderHeight, 0, &MiscSettings);
-		DoSettingsControlsButtons(32, 44, MiscSettings);
-	}
-
-	UiDoListboxEnd(&s_ScrollValue, 0);
-}
-
-int CMenus::RenderDropDown(int &CurDropDownState, CUIRect *pRect, int CurSelection, const void **pIDs, const char **pStr, int PickNum, const void *pID, float &ScrollVal)
-{
-	if(CurDropDownState != 0)
-	{
-		CUIRect ListRect;
-		pRect->HSplitTop(24.0f * PickNum, &ListRect, pRect);
-		char aBuf[1024];
-		UiDoListboxStart(&pID, &ListRect, 24.0f, "", aBuf, PickNum, 1, CurSelection, ScrollVal);
-		for(int i = 0; i < PickNum; ++i)
-		{
-			CListboxItem Item = UiDoListboxNextItem(pIDs[i], CurSelection == i);
-			if(Item.m_Visible)
-			{
-				str_format(aBuf, sizeof(aBuf), "%s", pStr[i]);
-				UI()->DoLabel(&Item.m_Rect, aBuf, 16.0f, TEXTALIGN_CENTER);
-			}
-		}
-		bool ClickedItem = false;
-		int NewIndex = UiDoListboxEnd(&ScrollVal, NULL, &ClickedItem);
-		if(ClickedItem)
-		{
-			CurDropDownState = 0;
-			return NewIndex;
-		}
-		else
-			return CurSelection;
-	}
-	else
-	{
-		CUIRect Button;
-		pRect->HSplitTop(24.0f, &Button, pRect);
-		if(DoButton_MenuTab(pID, CurSelection > -1 ? pStr[CurSelection] : "", 0, &Button, CUI::CORNER_ALL, NULL, NULL, NULL, NULL, 4.0f))
-			CurDropDownState = 1;
-
-		CUIRect DropDownIcon = Button;
-		DropDownIcon.HMargin(2.0f, &DropDownIcon);
-		DropDownIcon.VSplitRight(5.0f, &DropDownIcon, nullptr);
-		TextRender()->SetCurFont(TextRender()->GetFont(TEXT_FONT_ICON_FONT));
-		TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
-		UI()->DoLabel(&DropDownIcon, "\xEF\x84\xBA", DropDownIcon.h * CUI::ms_FontmodHeight, TEXTALIGN_RIGHT);
-		TextRender()->SetRenderFlags(0);
-		TextRender()->SetCurFont(NULL);
-		return CurSelection;
+		GameClient()->RefreshSkins(CSkinDescriptor::FLAG_SIX);
 	}
 }
 
 void CMenus::RenderSettingsGraphics(CUIRect MainView)
 {
-	CUIRect Button, Label;
+	CUIRect Button;
 	char aBuf[128];
 	bool CheckSettings = false;
 
@@ -1359,8 +852,7 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 	static int s_NumNodes = Graphics()->GetVideoModes(s_aModes, MAX_RESOLUTIONS, g_Config.m_GfxScreen);
 	static int s_GfxFsaaSamples = g_Config.m_GfxFsaaSamples;
 	static bool s_GfxBackendChanged = false;
-	static bool s_GfxGPUChanged = false;
-	static int s_GfxHighdpi = g_Config.m_GfxHighdpi;
+	static bool s_GfxGpuChanged = false;
 
 	static int s_InitDisplayAllVideoModes = g_Config.m_GfxDisplayAllVideoModes;
 
@@ -1370,10 +862,9 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 	{
 		s_WasInit = true;
 
-		Graphics()->AddWindowResizeListener([&](void *pUser) {
+		Graphics()->AddWindowPropChangeListener([]() {
 			s_ModesReload = true;
-		},
-			this);
+		});
 	}
 
 	if(s_ModesReload || g_Config.m_GfxDisplayAllVideoModes != s_InitDisplayAllVideoModes)
@@ -1386,21 +877,23 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 	CUIRect ModeList, ModeLabel;
 	MainView.VSplitLeft(350.0f, &MainView, &ModeList);
 	ModeList.HSplitTop(24.0f, &ModeLabel, &ModeList);
-	MainView.VSplitLeft(340.0f, &MainView, 0);
+	MainView.VSplitLeft(340.0f, &MainView, nullptr);
 
 	// display mode list
-	static float s_ScrollValue = 0;
+	static CListBox s_ListBox;
 	static const float sc_RowHeightResList = 22.0f;
 	static const float sc_FontSizeResListHeader = 12.0f;
 	static const float sc_FontSizeResList = 10.0f;
-	int OldSelected = -1;
+
 	{
 		int G = std::gcd(g_Config.m_GfxScreenWidth, g_Config.m_GfxScreenHeight);
-		str_format(aBuf, sizeof(aBuf), "%s: %dx%d @%dhz %d bit (%d:%d)", Localize("Current"), int(g_Config.m_GfxScreenWidth * Graphics()->ScreenHiDPIScale()), int(g_Config.m_GfxScreenHeight * Graphics()->ScreenHiDPIScale()), g_Config.m_GfxScreenRefreshRate, g_Config.m_GfxColorDepth, g_Config.m_GfxScreenWidth / G, g_Config.m_GfxScreenHeight / G);
+		str_format(aBuf, sizeof(aBuf), "%s: %dx%d @%dhz %d bit (%d:%d)", Localize("Current"), (int)(g_Config.m_GfxScreenWidth * Graphics()->ScreenHiDPIScale()), (int)(g_Config.m_GfxScreenHeight * Graphics()->ScreenHiDPIScale()), g_Config.m_GfxScreenRefreshRate, g_Config.m_GfxColorDepth, g_Config.m_GfxScreenWidth / G, g_Config.m_GfxScreenHeight / G);
+		Ui()->DoLabel(&ModeLabel, aBuf, sc_FontSizeResListHeader, TEXTALIGN_MC);
 	}
 
-	UI()->DoLabel(&ModeLabel, aBuf, sc_FontSizeResListHeader, TEXTALIGN_CENTER);
-	UiDoListboxStart(&s_NumNodes, &ModeList, sc_RowHeightResList, Localize("Display Modes"), aBuf, s_NumNodes - 1, 1, OldSelected, s_ScrollValue);
+	int OldSelected = -1;
+	s_ListBox.SetActive(!Ui()->IsPopupOpen());
+	s_ListBox.DoStart(sc_RowHeightResList, s_NumNodes, 1, 3, OldSelected, &ModeList);
 
 	for(int i = 0; i < s_NumNodes; ++i)
 	{
@@ -1413,16 +906,16 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 			OldSelected = i;
 		}
 
-		CListboxItem Item = UiDoListboxNextItem(&s_aModes[i], OldSelected == i);
-		if(Item.m_Visible)
-		{
-			int G = std::gcd(s_aModes[i].m_CanvasWidth, s_aModes[i].m_CanvasHeight);
-			str_format(aBuf, sizeof(aBuf), " %dx%d @%dhz %d bit (%d:%d)", s_aModes[i].m_CanvasWidth, s_aModes[i].m_CanvasHeight, s_aModes[i].m_RefreshRate, Depth, s_aModes[i].m_CanvasWidth / G, s_aModes[i].m_CanvasHeight / G);
-			UI()->DoLabel(&Item.m_Rect, aBuf, sc_FontSizeResList, TEXTALIGN_LEFT);
-		}
+		const CListboxItem Item = s_ListBox.DoNextItem(&s_aModes[i], OldSelected == i);
+		if(!Item.m_Visible)
+			continue;
+
+		int G = std::gcd(s_aModes[i].m_WindowWidth, s_aModes[i].m_WindowHeight);
+		str_format(aBuf, sizeof(aBuf), " %dx%d @%dhz %d bit (%d:%d)", s_aModes[i].m_CanvasWidth, s_aModes[i].m_CanvasHeight, s_aModes[i].m_RefreshRate, Depth, s_aModes[i].m_WindowWidth / G, s_aModes[i].m_WindowHeight / G);
+		Ui()->DoLabel(&Item.m_Rect, aBuf, sc_FontSizeResList, TEXTALIGN_ML);
 	}
 
-	const int NewSelected = UiDoListboxEnd(&s_ScrollValue, 0);
+	const int NewSelected = s_ListBox.DoEnd();
 	if(OldSelected != NewSelected)
 	{
 		const int Depth = s_aModes[NewSelected].m_Red + s_aModes[NewSelected].m_Green + s_aModes[NewSelected].m_Blue > 16 ? 24 : 16;
@@ -1430,76 +923,84 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 		g_Config.m_GfxScreenWidth = s_aModes[NewSelected].m_WindowWidth;
 		g_Config.m_GfxScreenHeight = s_aModes[NewSelected].m_WindowHeight;
 		g_Config.m_GfxScreenRefreshRate = s_aModes[NewSelected].m_RefreshRate;
-		Graphics()->Resize(g_Config.m_GfxScreenWidth, g_Config.m_GfxScreenHeight, g_Config.m_GfxScreenRefreshRate);
+		Graphics()->ResizeToScreen();
 	}
 
 	// switches
-	static float s_ScrollValueDrop = 0;
-	const char *pWindowModes[] = {Localize("Windowed"), Localize("Windowed borderless"), Localize("Windowed fullscreen"), Localize("Desktop fullscreen"), Localize("Fullscreen")};
-	static const int s_NumWindowMode = std::size(pWindowModes);
-	static int s_aWindowModeIDs[s_NumWindowMode];
-	const void *aWindowModeIDs[s_NumWindowMode];
-	for(int i = 0; i < s_NumWindowMode; ++i)
-		aWindowModeIDs[i] = &s_aWindowModeIDs[i];
-	static int s_WindowModeDropDownState = 0;
+	CUIRect WindowModeDropDown;
+	MainView.HSplitTop(20.0f, &WindowModeDropDown, &MainView);
 
-	static int s_OldSelectedBackend = -1;
-	static int s_OldSelectedGPU = -1;
+	const char *apWindowModes[] = {Localize("Windowed"), Localize("Windowed borderless"), Localize("Windowed fullscreen"), Localize("Desktop fullscreen"), Localize("Fullscreen")};
+	static const int s_NumWindowMode = std::size(apWindowModes);
 
-	OldSelected = (g_Config.m_GfxFullscreen ? (g_Config.m_GfxFullscreen == 1 ? 4 : (g_Config.m_GfxFullscreen == 2 ? 3 : 2)) : (g_Config.m_GfxBorderless ? 1 : 0));
+	const int OldWindowMode = (g_Config.m_GfxFullscreen ? (g_Config.m_GfxFullscreen == 1 ? 4 : (g_Config.m_GfxFullscreen == 2 ? 3 : 2)) : (g_Config.m_GfxBorderless ? 1 : 0));
 
-	const int NewWindowMode = RenderDropDown(s_WindowModeDropDownState, &MainView, OldSelected, aWindowModeIDs, pWindowModes, s_NumWindowMode, &s_NumWindowMode, s_ScrollValueDrop);
-	if(OldSelected != NewWindowMode)
+	static CUi::SDropDownState s_WindowModeDropDownState;
+	static CScrollRegion s_WindowModeDropDownScrollRegion;
+	s_WindowModeDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_WindowModeDropDownScrollRegion;
+	const int NewWindowMode = Ui()->DoDropDown(&WindowModeDropDown, OldWindowMode, apWindowModes, s_NumWindowMode, s_WindowModeDropDownState);
+	if(OldWindowMode != NewWindowMode)
 	{
 		if(NewWindowMode == 0)
-			Client()->SetWindowParams(0, false, true);
+			Graphics()->SetWindowParams(0, false);
 		else if(NewWindowMode == 1)
-			Client()->SetWindowParams(0, true, true);
+			Graphics()->SetWindowParams(0, true);
 		else if(NewWindowMode == 2)
-			Client()->SetWindowParams(3, false, false);
+			Graphics()->SetWindowParams(3, false);
 		else if(NewWindowMode == 3)
-			Client()->SetWindowParams(2, false, true);
+			Graphics()->SetWindowParams(2, false);
 		else if(NewWindowMode == 4)
-			Client()->SetWindowParams(1, false, true);
-	}
-
-	MainView.HSplitTop(20.0f, &Button, &MainView);
-	str_format(aBuf, sizeof(aBuf), "%s (%s)", Localize("V-Sync"), Localize("may cause delay"));
-	if(DoButton_CheckBox(&g_Config.m_GfxVsync, aBuf, g_Config.m_GfxVsync, &Button))
-	{
-		Client()->ToggleWindowVSync();
+			Graphics()->SetWindowParams(1, false);
 	}
 
 	if(Graphics()->GetNumScreens() > 1)
 	{
-		int NumScreens = Graphics()->GetNumScreens();
-		MainView.HSplitTop(20.0f, &Button, &MainView);
-		int Screen_MouseButton = DoButton_CheckBox_Number(&g_Config.m_GfxScreen, Localize("Screen"), g_Config.m_GfxScreen, &Button);
-		if(Screen_MouseButton == 1) // inc
+		CUIRect ScreenDropDown;
+		MainView.HSplitTop(2.0f, nullptr, &MainView);
+		MainView.HSplitTop(20.0f, &ScreenDropDown, &MainView);
+
+		const int NumScreens = Graphics()->GetNumScreens();
+		static std::vector<std::string> s_vScreenNames;
+		static std::vector<const char *> s_vpScreenNames;
+		s_vScreenNames.resize(NumScreens);
+		s_vpScreenNames.resize(NumScreens);
+
+		for(int i = 0; i < NumScreens; ++i)
 		{
-			Client()->SwitchWindowScreen((g_Config.m_GfxScreen + 1) % NumScreens);
-			s_NumNodes = Graphics()->GetVideoModes(s_aModes, MAX_RESOLUTIONS, g_Config.m_GfxScreen);
+			str_format(aBuf, sizeof(aBuf), "%s %d: %s", Localize("Screen"), i, Graphics()->GetScreenName(i));
+			s_vScreenNames[i] = aBuf;
+			s_vpScreenNames[i] = s_vScreenNames[i].c_str();
 		}
-		else if(Screen_MouseButton == 2) // dec
-		{
-			Client()->SwitchWindowScreen((g_Config.m_GfxScreen - 1 + NumScreens) % NumScreens);
-			s_NumNodes = Graphics()->GetVideoModes(s_aModes, MAX_RESOLUTIONS, g_Config.m_GfxScreen);
-		}
+
+		static CUi::SDropDownState s_ScreenDropDownState;
+		static CScrollRegion s_ScreenDropDownScrollRegion;
+		s_ScreenDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_ScreenDropDownScrollRegion;
+		const int NewScreen = Ui()->DoDropDown(&ScreenDropDown, g_Config.m_GfxScreen, s_vpScreenNames.data(), s_vpScreenNames.size(), s_ScreenDropDownState);
+		if(NewScreen != g_Config.m_GfxScreen)
+			Graphics()->SwitchWindowScreen(NewScreen, true);
+	}
+
+	MainView.HSplitTop(2.0f, nullptr, &MainView);
+	MainView.HSplitTop(20.0f, &Button, &MainView);
+	str_format(aBuf, sizeof(aBuf), "%s (%s)", Localize("V-Sync"), Localize("may cause delay"));
+	if(DoButton_CheckBox(&g_Config.m_GfxVsync, aBuf, g_Config.m_GfxVsync, &Button))
+	{
+		Graphics()->SetVSync(!g_Config.m_GfxVsync);
 	}
 
 	bool MultiSamplingChanged = false;
 	MainView.HSplitTop(20.0f, &Button, &MainView);
 	str_format(aBuf, sizeof(aBuf), "%s (%s)", Localize("FSAA samples"), Localize("may cause delay"));
-	int GfxFsaaSamples_MouseButton = DoButton_CheckBox_Number(&g_Config.m_GfxFsaaSamples, aBuf, g_Config.m_GfxFsaaSamples, &Button);
+	int GfxFsaaSamplesMouseButton = DoButton_CheckBox_Number(&g_Config.m_GfxFsaaSamples, aBuf, g_Config.m_GfxFsaaSamples, &Button);
 	int CurFSAA = g_Config.m_GfxFsaaSamples == 0 ? 1 : g_Config.m_GfxFsaaSamples;
-	if(GfxFsaaSamples_MouseButton == 1) // inc
+	if(GfxFsaaSamplesMouseButton == 1) // inc
 	{
 		g_Config.m_GfxFsaaSamples = std::pow(2, (int)std::log2(CurFSAA) + 1);
 		if(g_Config.m_GfxFsaaSamples > 64)
 			g_Config.m_GfxFsaaSamples = 0;
 		MultiSamplingChanged = true;
 	}
-	else if(GfxFsaaSamples_MouseButton == 2) // dec
+	else if(GfxFsaaSamplesMouseButton == 2) // dec
 	{
 		if(CurFSAA == 1)
 			g_Config.m_GfxFsaaSamples = 64;
@@ -1517,7 +1018,7 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 		{
 			// try again with 0 if mouse click was increasing multi sampling
 			// else just accept the current value as is
-			if((uint32_t)g_Config.m_GfxFsaaSamples > MultiSamplingCountBackend && GfxFsaaSamples_MouseButton == 1)
+			if((uint32_t)g_Config.m_GfxFsaaSamples > MultiSamplingCountBackend && GfxFsaaSamplesMouseButton == 1)
 				Graphics()->SetMultiSampling(0, MultiSamplingCountBackend);
 			g_Config.m_GfxFsaaSamples = (int)MultiSamplingCountBackend;
 		}
@@ -1533,32 +1034,18 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 	GameClient()->m_Tooltips.DoToolTip(&g_Config.m_GfxHighDetail, &Button, Localize("Allows maps to render with more detail"));
 
 	MainView.HSplitTop(20.0f, &Button, &MainView);
-	if(DoButton_CheckBox(&g_Config.m_GfxHighdpi, Localize("Use high DPI"), g_Config.m_GfxHighdpi, &Button))
-	{
-		CheckSettings = true;
-		g_Config.m_GfxHighdpi ^= 1;
-	}
+	if(DoButton_CheckBox(&g_Config.m_ClShowfps, Localize("Show FPS"), g_Config.m_ClShowfps, &Button))
+		g_Config.m_ClShowfps ^= 1;
+	GameClient()->m_Tooltips.DoToolTip(&g_Config.m_ClShowfps, &Button, Localize("Renders your frame rate in the top right"));
 
-	MainView.HSplitTop(20.0f, &Label, &MainView);
-	Label.VSplitLeft(160.0f, &Label, &Button);
-	if(g_Config.m_GfxRefreshRate)
-		str_format(aBuf, sizeof(aBuf), "%s: %i Hz", Localize("Refresh Rate"), g_Config.m_GfxRefreshRate);
-	else
-		str_format(aBuf, sizeof(aBuf), "%s: %s", Localize("Refresh Rate"), "∞");
-	UI()->DoLabel(&Label, aBuf, 14.0f, TEXTALIGN_LEFT);
-	int NewRefreshRate = static_cast<int>(UIEx()->DoScrollbarH(&g_Config.m_GfxRefreshRate, &Button, (minimum(g_Config.m_GfxRefreshRate, 1000)) / 1000.0f) * 1000.0f + 0.1f);
-	if(g_Config.m_GfxRefreshRate <= 1000 || NewRefreshRate < 1000)
-		g_Config.m_GfxRefreshRate = NewRefreshRate;
+	MainView.HSplitTop(20.0f, &Button, &MainView);
+	str_copy(aBuf, " ");
+	str_append(aBuf, Localize("Hz", "Hertz"));
+	Ui()->DoScrollbarOption(&g_Config.m_GfxRefreshRate, &g_Config.m_GfxRefreshRate, &Button, Localize("Refresh Rate"), 10, 1000, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_INFINITE | CUi::SCROLLBAR_OPTION_NOCLAMPVALUE | CUi::SCROLLBAR_OPTION_DELAYUPDATE, aBuf);
 
-	CUIRect Text;
-	MainView.HSplitTop(20.0f, 0, &MainView);
-	MainView.HSplitTop(20.0f, &Text, &MainView);
-	//text.VSplitLeft(15.0f, 0, &text);
-	UI()->DoLabel(&Text, Localize("UI Color"), 14.0f, TEXTALIGN_LEFT);
-	CUIRect HSLBar = MainView;
-	RenderHSLScrollbars(&HSLBar, &g_Config.m_UiColor, true);
-	MainView.y = HSLBar.y;
-	MainView.h = MainView.h - MainView.y;
+	MainView.HSplitTop(2.0f, nullptr, &MainView);
+	static CButtonContainer s_UiColorResetId;
+	DoLine_ColorPicker(&s_UiColorResetId, 25.0f, 13.0f, 2.0f, &MainView, Localize("UI Color"), &g_Config.m_UiColor, color_cast<ColorRGBA>(ColorHSLA(0xE4A046AFU, true)), false, nullptr, true);
 
 	// Backend list
 	struct SMenuBackendInfo
@@ -1592,30 +1079,26 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 
 	if(FoundBackendCount > 1)
 	{
+		CUIRect Text, BackendDropDown;
 		MainView.HSplitTop(10.0f, nullptr, &MainView);
 		MainView.HSplitTop(20.0f, &Text, &MainView);
-		UI()->DoLabel(&Text, Localize("Renderer"), 16.0f, TEXTALIGN_CENTER);
+		MainView.HSplitTop(2.0f, nullptr, &MainView);
+		MainView.HSplitTop(20.0f, &BackendDropDown, &MainView);
+		Ui()->DoLabel(&Text, Localize("Renderer"), 16.0f, TEXTALIGN_MC);
 
-		static float s_ScrollValueDropBackend = 0;
-		static int s_BackendDropDownState = 0;
-
-		static std::vector<std::unique_ptr<int>> vBackendIDs;
-		static std::vector<const void *> vBackendIDPtrs;
-		static std::vector<std::string> vBackendIDNames;
-		static std::vector<const char *> vBackendIDNamesCStr;
-		static std::vector<SMenuBackendInfo> vBackendInfos;
+		static std::vector<std::string> s_vBackendIdNames;
+		static std::vector<const char *> s_vpBackendIdNamesCStr;
+		static std::vector<SMenuBackendInfo> s_vBackendInfos;
 
 		size_t BackendCount = FoundBackendCount + 1;
-		vBackendIDs.resize(BackendCount);
-		vBackendIDPtrs.resize(BackendCount);
-		vBackendIDNames.resize(BackendCount);
-		vBackendIDNamesCStr.resize(BackendCount);
-		vBackendInfos.resize(BackendCount);
+		s_vBackendIdNames.resize(BackendCount);
+		s_vpBackendIdNamesCStr.resize(BackendCount);
+		s_vBackendInfos.resize(BackendCount);
 
 		char aTmpBackendName[256];
 
 		auto IsInfoDefault = [](const SMenuBackendInfo &CheckInfo) {
-			return str_comp_nocase(CheckInfo.m_pBackendName, "OpenGL") == 0 && CheckInfo.m_Major == 3 && CheckInfo.m_Minor == 0 && CheckInfo.m_Patch == 0;
+			return str_comp_nocase(CheckInfo.m_pBackendName, DefaultConfig::GfxBackend) == 0 && CheckInfo.m_Major == DefaultConfig::GfxGLMajor && CheckInfo.m_Minor == DefaultConfig::GfxGLMinor && CheckInfo.m_Patch == DefaultConfig::GfxGLPatch;
 		};
 
 		int OldSelectedBackend = -1;
@@ -1627,22 +1110,16 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 				auto &Info = aaSupportedBackends[i][n];
 				if(Info.m_Found)
 				{
-					if(vBackendIDs[CurCounter].get() == nullptr)
-						vBackendIDs[CurCounter] = std::make_unique<int>();
-					vBackendIDPtrs[CurCounter] = vBackendIDs[CurCounter].get();
-
+					bool IsDefault = IsInfoDefault(Info);
+					str_format(aTmpBackendName, sizeof(aTmpBackendName), "%s (%d.%d.%d)%s%s", Info.m_pBackendName, Info.m_Major, Info.m_Minor, Info.m_Patch, IsDefault ? " - " : "", IsDefault ? Localize("default") : "");
+					s_vBackendIdNames[CurCounter] = aTmpBackendName;
+					s_vpBackendIdNamesCStr[CurCounter] = s_vBackendIdNames[CurCounter].c_str();
+					if(str_comp_nocase(Info.m_pBackendName, g_Config.m_GfxBackend) == 0 && g_Config.m_GfxGLMajor == Info.m_Major && g_Config.m_GfxGLMinor == Info.m_Minor && g_Config.m_GfxGLPatch == Info.m_Patch)
 					{
-						bool IsDefault = IsInfoDefault(Info);
-						str_format(aTmpBackendName, sizeof(aTmpBackendName), "%s (%d.%d.%d)%s%s", Info.m_pBackendName, Info.m_Major, Info.m_Minor, Info.m_Patch, IsDefault ? " - " : "", IsDefault ? Localize("default") : "");
-						vBackendIDNames[CurCounter] = aTmpBackendName;
-						vBackendIDNamesCStr[CurCounter] = vBackendIDNames[CurCounter].c_str();
-						if(str_comp_nocase(Info.m_pBackendName, g_Config.m_GfxBackend) == 0 && g_Config.m_GfxGLMajor == Info.m_Major && g_Config.m_GfxGLMinor == Info.m_Minor && g_Config.m_GfxGLPatch == Info.m_Patch)
-						{
-							OldSelectedBackend = CurCounter;
-						}
-
-						vBackendInfos[CurCounter] = Info;
+						OldSelectedBackend = CurCounter;
 					}
+
+					s_vBackendInfos[CurCounter] = Info;
 					++CurCounter;
 				}
 			}
@@ -1656,34 +1133,31 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 		else
 		{
 			// custom selected one
-			if(vBackendIDs[CurCounter].get() == nullptr)
-				vBackendIDs[CurCounter] = std::make_unique<int>();
-			vBackendIDPtrs[CurCounter] = vBackendIDs[CurCounter].get();
-
 			str_format(aTmpBackendName, sizeof(aTmpBackendName), "%s (%s %d.%d.%d)", Localize("custom"), g_Config.m_GfxBackend, g_Config.m_GfxGLMajor, g_Config.m_GfxGLMinor, g_Config.m_GfxGLPatch);
-			vBackendIDNames[CurCounter] = aTmpBackendName;
-			vBackendIDNamesCStr[CurCounter] = vBackendIDNames[CurCounter].c_str();
+			s_vBackendIdNames[CurCounter] = aTmpBackendName;
+			s_vpBackendIdNamesCStr[CurCounter] = s_vBackendIdNames[CurCounter].c_str();
 			OldSelectedBackend = CurCounter;
 
-			vBackendInfos[CurCounter].m_pBackendName = "custom";
-			vBackendInfos[CurCounter].m_Major = g_Config.m_GfxGLMajor;
-			vBackendInfos[CurCounter].m_Minor = g_Config.m_GfxGLMinor;
-			vBackendInfos[CurCounter].m_Patch = g_Config.m_GfxGLPatch;
+			s_vBackendInfos[CurCounter].m_pBackendName = "custom";
+			s_vBackendInfos[CurCounter].m_Major = g_Config.m_GfxGLMajor;
+			s_vBackendInfos[CurCounter].m_Minor = g_Config.m_GfxGLMinor;
+			s_vBackendInfos[CurCounter].m_Patch = g_Config.m_GfxGLPatch;
 		}
 
+		static int s_OldSelectedBackend = -1;
 		if(s_OldSelectedBackend == -1)
 			s_OldSelectedBackend = OldSelectedBackend;
 
-		static int s_BackendCount = 0;
-		s_BackendCount = BackendCount;
-
-		const int NewBackend = RenderDropDown(s_BackendDropDownState, &MainView, OldSelectedBackend, vBackendIDPtrs.data(), vBackendIDNamesCStr.data(), s_BackendCount, &s_BackendCount, s_ScrollValueDropBackend);
+		static CUi::SDropDownState s_BackendDropDownState;
+		static CScrollRegion s_BackendDropDownScrollRegion;
+		s_BackendDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_BackendDropDownScrollRegion;
+		const int NewBackend = Ui()->DoDropDown(&BackendDropDown, OldSelectedBackend, s_vpBackendIdNamesCStr.data(), BackendCount, s_BackendDropDownState);
 		if(OldSelectedBackend != NewBackend)
 		{
-			str_copy(g_Config.m_GfxBackend, vBackendInfos[NewBackend].m_pBackendName, sizeof(g_Config.m_GfxBackend));
-			g_Config.m_GfxGLMajor = vBackendInfos[NewBackend].m_Major;
-			g_Config.m_GfxGLMinor = vBackendInfos[NewBackend].m_Minor;
-			g_Config.m_GfxGLPatch = vBackendInfos[NewBackend].m_Patch;
+			str_copy(g_Config.m_GfxBackend, s_vBackendInfos[NewBackend].m_pBackendName);
+			g_Config.m_GfxGLMajor = s_vBackendInfos[NewBackend].m_Major;
+			g_Config.m_GfxGLMinor = s_vBackendInfos[NewBackend].m_Minor;
+			g_Config.m_GfxGLPatch = s_vBackendInfos[NewBackend].m_Patch;
 
 			CheckSettings = true;
 			s_GfxBackendChanged = s_OldSelectedBackend != NewBackend;
@@ -1691,67 +1165,61 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 	}
 
 	// GPU list
-	const auto &GPUList = Graphics()->GetGPUs();
-	if(GPUList.m_vGPUs.size() > 1)
+	const auto &GpuList = Graphics()->GetGpus();
+	if(GpuList.m_vGpus.size() > 1)
 	{
+		CUIRect Text, GpuDropDown;
 		MainView.HSplitTop(10.0f, nullptr, &MainView);
 		MainView.HSplitTop(20.0f, &Text, &MainView);
-		UI()->DoLabel(&Text, Localize("Graphics cards"), 16.0f, TEXTALIGN_CENTER);
+		MainView.HSplitTop(2.0f, nullptr, &MainView);
+		MainView.HSplitTop(20.0f, &GpuDropDown, &MainView);
+		Ui()->DoLabel(&Text, Localize("Graphics card"), 16.0f, TEXTALIGN_MC);
 
-		static float s_ScrollValueDropGPU = 0;
-		static int s_GPUDropDownState = 0;
+		static std::vector<const char *> s_vpGpuIdNames;
 
-		static std::vector<std::unique_ptr<int>> vGPUIDs;
-		static std::vector<const void *> vGPUIDPtrs;
-		static std::vector<const char *> vGPUIDNames;
-
-		size_t GPUCount = GPUList.m_vGPUs.size() + 1;
-		vGPUIDs.resize(GPUCount);
-		vGPUIDPtrs.resize(GPUCount);
-		vGPUIDNames.resize(GPUCount);
+		size_t GpuCount = GpuList.m_vGpus.size() + 1;
+		s_vpGpuIdNames.resize(GpuCount);
 
 		char aCurDeviceName[256 + 4];
 
-		int OldSelectedGPU = -1;
-		for(size_t i = 0; i < GPUCount; ++i)
+		int OldSelectedGpu = -1;
+		for(size_t i = 0; i < GpuCount; ++i)
 		{
-			if(vGPUIDs[i].get() == nullptr)
-				vGPUIDs[i] = std::make_unique<int>();
-			vGPUIDPtrs[i] = vGPUIDs[i].get();
 			if(i == 0)
 			{
-				str_format(aCurDeviceName, sizeof(aCurDeviceName), "%s(%s)", Localize("auto"), GPUList.m_AutoGPU.m_Name);
-				vGPUIDNames[i] = aCurDeviceName;
-				if(str_comp("auto", g_Config.m_GfxGPUName) == 0)
+				str_format(aCurDeviceName, sizeof(aCurDeviceName), "%s (%s)", Localize("auto"), GpuList.m_AutoGpu.m_aName);
+				s_vpGpuIdNames[i] = aCurDeviceName;
+				if(str_comp("auto", g_Config.m_GfxGpuName) == 0)
 				{
-					OldSelectedGPU = 0;
+					OldSelectedGpu = 0;
 				}
 			}
 			else
 			{
-				vGPUIDNames[i] = GPUList.m_vGPUs[i - 1].m_Name;
-				if(str_comp(GPUList.m_vGPUs[i - 1].m_Name, g_Config.m_GfxGPUName) == 0)
+				s_vpGpuIdNames[i] = GpuList.m_vGpus[i - 1].m_aName;
+				if(str_comp(GpuList.m_vGpus[i - 1].m_aName, g_Config.m_GfxGpuName) == 0)
 				{
-					OldSelectedGPU = i;
+					OldSelectedGpu = i;
 				}
 			}
 		}
 
-		static int s_GPUCount = 0;
-		s_GPUCount = GPUCount;
+		static int s_OldSelectedGpu = -1;
+		if(s_OldSelectedGpu == -1)
+			s_OldSelectedGpu = OldSelectedGpu;
 
-		if(s_OldSelectedGPU == -1)
-			s_OldSelectedGPU = OldSelectedGPU;
-
-		const int NewGPU = RenderDropDown(s_GPUDropDownState, &MainView, OldSelectedGPU, vGPUIDPtrs.data(), vGPUIDNames.data(), s_GPUCount, &s_GPUCount, s_ScrollValueDropGPU);
-		if(OldSelectedGPU != NewGPU)
+		static CUi::SDropDownState s_GpuDropDownState;
+		static CScrollRegion s_GpuDropDownScrollRegion;
+		s_GpuDropDownState.m_SelectionPopupContext.m_pScrollRegion = &s_GpuDropDownScrollRegion;
+		const int NewGpu = Ui()->DoDropDown(&GpuDropDown, OldSelectedGpu, s_vpGpuIdNames.data(), GpuCount, s_GpuDropDownState);
+		if(OldSelectedGpu != NewGpu)
 		{
-			if(NewGPU == 0)
-				str_copy(g_Config.m_GfxGPUName, "auto", sizeof(g_Config.m_GfxGPUName));
+			if(NewGpu == 0)
+				str_copy(g_Config.m_GfxGpuName, "auto");
 			else
-				str_copy(g_Config.m_GfxGPUName, GPUList.m_vGPUs[NewGPU - 1].m_Name, sizeof(g_Config.m_GfxGPUName));
+				str_copy(g_Config.m_GfxGpuName, GpuList.m_vGpus[NewGpu - 1].m_aName);
 			CheckSettings = true;
-			s_GfxGPUChanged = NewGPU != s_OldSelectedGPU;
+			s_GfxGpuChanged = NewGpu != s_OldSelectedGpu;
 		}
 	}
 
@@ -1760,29 +1228,21 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 	{
 		m_NeedRestartGraphics = !(s_GfxFsaaSamples == g_Config.m_GfxFsaaSamples &&
 					  !s_GfxBackendChanged &&
-					  !s_GfxGPUChanged &&
-					  s_GfxHighdpi == g_Config.m_GfxHighdpi);
+					  !s_GfxGpuChanged);
 	}
 }
 
 void CMenus::RenderSettingsSound(CUIRect MainView)
 {
-	CUIRect Button, Label;
 	static int s_SndEnable = g_Config.m_SndEnable;
-	static int s_SndRate = g_Config.m_SndRate;
 
+	CUIRect Button;
 	MainView.HSplitTop(20.0f, &Button, &MainView);
 	if(DoButton_CheckBox(&g_Config.m_SndEnable, Localize("Use sounds"), g_Config.m_SndEnable, &Button))
 	{
 		g_Config.m_SndEnable ^= 1;
-		if(g_Config.m_SndEnable)
-		{
-			if(g_Config.m_SndMusic && Client()->State() == IClient::STATE_OFFLINE)
-				m_pClient->m_Sounds.Play(CSounds::CHN_MUSIC, SOUND_MENU, 1.0f);
-		}
-		else
-			m_pClient->m_Sounds.Stop(SOUND_MENU);
-		m_NeedRestartSound = g_Config.m_SndEnable && (!s_SndEnable || s_SndRate != g_Config.m_SndRate);
+		UpdateMusicState();
+		m_NeedRestartSound = g_Config.m_SndEnable && !s_SndEnable;
 	}
 
 	if(!g_Config.m_SndEnable)
@@ -1792,13 +1252,7 @@ void CMenus::RenderSettingsSound(CUIRect MainView)
 	if(DoButton_CheckBox(&g_Config.m_SndMusic, Localize("Play background music"), g_Config.m_SndMusic, &Button))
 	{
 		g_Config.m_SndMusic ^= 1;
-		if(Client()->State() == IClient::STATE_OFFLINE)
-		{
-			if(g_Config.m_SndMusic)
-				m_pClient->m_Sounds.Play(CSounds::CHN_MUSIC, SOUND_MENU, 1.0f);
-			else
-				m_pClient->m_Sounds.Stop(SOUND_MENU);
-		}
+		UpdateMusicState();
 	}
 
 	MainView.HSplitTop(20.0f, &Button, &MainView);
@@ -1833,387 +1287,294 @@ void CMenus::RenderSettingsSound(CUIRect MainView)
 	if(DoButton_CheckBox(&g_Config.m_SndHighlight, Localize("Enable highlighted chat sound"), g_Config.m_SndHighlight, &Button))
 		g_Config.m_SndHighlight ^= 1;
 
-	MainView.HSplitTop(20.0f, &Button, &MainView);
-	if(DoButton_CheckBox(&g_Config.m_ClThreadsoundloading, Localize("Threaded sound loading"), g_Config.m_ClThreadsoundloading, &Button))
-		g_Config.m_ClThreadsoundloading ^= 1;
-
-	// sample rate box
-	{
-		char aBuf[64];
-		str_format(aBuf, sizeof(aBuf), "%d", g_Config.m_SndRate);
-		MainView.HSplitTop(20.0f, &Button, &MainView);
-		UI()->DoLabel(&Button, Localize("Sample rate"), 14.0f, TEXTALIGN_LEFT);
-		Button.VSplitLeft(190.0f, 0, &Button);
-		static float s_Offset = 0.0f;
-		UIEx()->DoEditBox(&g_Config.m_SndRate, &Button, aBuf, sizeof(aBuf), 14.0f, &s_Offset);
-		g_Config.m_SndRate = maximum(1, str_toint(aBuf));
-		m_NeedRestartSound = !s_SndEnable || s_SndRate != g_Config.m_SndRate;
-	}
-
 	// volume slider
 	{
-		MainView.HSplitTop(5.0f, &Button, &MainView);
+		MainView.HSplitTop(5.0f, nullptr, &MainView);
 		MainView.HSplitTop(20.0f, &Button, &MainView);
-		Button.VSplitLeft(190.0f, &Label, &Button);
-		UI()->DoLabel(&Label, Localize("Sound volume"), 14.0f, TEXTALIGN_LEFT);
-		g_Config.m_SndVolume = (int)(UIEx()->DoScrollbarH(&g_Config.m_SndVolume, &Button, g_Config.m_SndVolume / 100.0f) * 100.0f);
+		Ui()->DoScrollbarOption(&g_Config.m_SndVolume, &g_Config.m_SndVolume, &Button, Localize("Sound volume"), 0, 100, &CUi::ms_LogarithmicScrollbarScale, 0u, "%");
 	}
 
 	// volume slider game sounds
 	{
-		MainView.HSplitTop(5.0f, &Button, &MainView);
+		MainView.HSplitTop(5.0f, nullptr, &MainView);
 		MainView.HSplitTop(20.0f, &Button, &MainView);
-		Button.VSplitLeft(190.0f, &Label, &Button);
-		UI()->DoLabel(&Label, Localize("Game sound volume"), 14.0f, TEXTALIGN_LEFT);
-		g_Config.m_SndGameSoundVolume = (int)(UIEx()->DoScrollbarH(&g_Config.m_SndGameSoundVolume, &Button, g_Config.m_SndGameSoundVolume / 100.0f) * 100.0f);
+		Ui()->DoScrollbarOption(&g_Config.m_SndGameVolume, &g_Config.m_SndGameVolume, &Button, Localize("Game sound volume"), 0, 100, &CUi::ms_LogarithmicScrollbarScale, 0u, "%");
 	}
 
 	// volume slider gui sounds
 	{
-		MainView.HSplitTop(5.0f, &Button, &MainView);
+		MainView.HSplitTop(5.0f, nullptr, &MainView);
 		MainView.HSplitTop(20.0f, &Button, &MainView);
-		Button.VSplitLeft(190.0f, &Label, &Button);
-		UI()->DoLabel(&Label, Localize("Chat sound volume"), 14.0f, TEXTALIGN_LEFT);
-		g_Config.m_SndChatSoundVolume = (int)(UIEx()->DoScrollbarH(&g_Config.m_SndChatSoundVolume, &Button, g_Config.m_SndChatSoundVolume / 100.0f) * 100.0f);
+		Ui()->DoScrollbarOption(&g_Config.m_SndChatVolume, &g_Config.m_SndChatVolume, &Button, Localize("Chat sound volume"), 0, 100, &CUi::ms_LogarithmicScrollbarScale, 0u, "%");
 	}
 
 	// volume slider map sounds
 	{
-		MainView.HSplitTop(5.0f, &Button, &MainView);
+		MainView.HSplitTop(5.0f, nullptr, &MainView);
 		MainView.HSplitTop(20.0f, &Button, &MainView);
-		Button.VSplitLeft(190.0f, &Label, &Button);
-		UI()->DoLabel(&Label, Localize("Map sound volume"), 14.0f, TEXTALIGN_LEFT);
-		g_Config.m_SndMapSoundVolume = (int)(UIEx()->DoScrollbarH(&g_Config.m_SndMapSoundVolume, &Button, g_Config.m_SndMapSoundVolume / 100.0f) * 100.0f);
+		Ui()->DoScrollbarOption(&g_Config.m_SndMapVolume, &g_Config.m_SndMapVolume, &Button, Localize("Map sound volume"), 0, 100, &CUi::ms_LogarithmicScrollbarScale, 0u, "%");
 	}
 
 	// volume slider background music
 	{
-		MainView.HSplitTop(5.0f, &Button, &MainView);
+		MainView.HSplitTop(5.0f, nullptr, &MainView);
 		MainView.HSplitTop(20.0f, &Button, &MainView);
-		Button.VSplitLeft(190.0f, &Label, &Button);
-		UI()->DoLabel(&Label, Localize("Background music volume"), 14.0f, TEXTALIGN_LEFT);
-		g_Config.m_SndBackgroundMusicVolume = (int)(UIEx()->DoScrollbarH(&g_Config.m_SndBackgroundMusicVolume, &Button, g_Config.m_SndBackgroundMusicVolume / 100.0f) * 100.0f);
+		Ui()->DoScrollbarOption(&g_Config.m_SndBackgroundMusicVolume, &g_Config.m_SndBackgroundMusicVolume, &Button, Localize("Background music volume"), 0, 100, &CUi::ms_LogarithmicScrollbarScale, 0u, "%");
 	}
 }
 
-class CLanguage
+void CMenus::RenderLanguageSettings(CUIRect MainView)
 {
-public:
-	CLanguage() = default;
-	CLanguage(const char *n, const char *f, int Code) :
-		m_Name(n), m_FileName(f), m_CountryCode(Code) {}
+	const float CreditsFontSize = 14.0f;
+	const float CreditsMargin = 10.0f;
 
-	std::string m_Name;
-	std::string m_FileName;
-	int m_CountryCode;
+	CUIRect List, CreditsScroll;
+	MainView.HSplitBottom(4.0f * CreditsFontSize + 2.0f * CreditsMargin + CScrollRegion::HEIGHT_MAGIC_FIX, &List, &CreditsScroll);
+	List.HSplitBottom(5.0f, &List, nullptr);
 
-	bool operator<(const CLanguage &Other) const { return m_Name < Other.m_Name; }
-};
+	RenderLanguageSelection(List);
 
-void LoadLanguageIndexfile(IStorage *pStorage, IConsole *pConsole, std::vector<CLanguage> &vLanguages)
-{
-	IOHANDLE File = pStorage->OpenFile("languages/index.txt", IOFLAG_READ | IOFLAG_SKIP_BOM, IStorage::TYPE_ALL);
-	if(!File)
+	CreditsScroll.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), IGraphics::CORNER_ALL, 5.0f);
+
+	static CScrollRegion s_CreditsScrollRegion;
+	vec2 ScrollOffset(0.0f, 0.0f);
+	CScrollRegionParams ScrollParams;
+	ScrollParams.m_ScrollUnit = CreditsFontSize;
+	s_CreditsScrollRegion.Begin(&CreditsScroll, &ScrollOffset, &ScrollParams);
+	CreditsScroll.y += ScrollOffset.y;
+
+	CTextCursor Cursor;
+	Cursor.m_FontSize = CreditsFontSize;
+	Cursor.m_LineWidth = CreditsScroll.w - 2.0f * CreditsMargin;
+
+	const unsigned OldRenderFlags = TextRender()->GetRenderFlags();
+	TextRender()->SetRenderFlags(OldRenderFlags | TEXT_RENDER_FLAG_ONE_TIME_USE);
+	STextContainerIndex CreditsTextContainer;
+	TextRender()->CreateTextContainer(CreditsTextContainer, &Cursor, Localize("English translation by the DDNet Team", "Translation credits: Add your own name here when you update translations"));
+	TextRender()->SetRenderFlags(OldRenderFlags);
+	if(CreditsTextContainer.Valid())
 	{
-		pConsole->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "localization", "couldn't open index file");
-		return;
+		CUIRect CreditsLabel;
+		CreditsScroll.HSplitTop(TextRender()->GetBoundingBoxTextContainer(CreditsTextContainer).m_H + 2.0f * CreditsMargin, &CreditsLabel, &CreditsScroll);
+		s_CreditsScrollRegion.AddRect(CreditsLabel);
+		CreditsLabel.Margin(CreditsMargin, &CreditsLabel);
+		TextRender()->RenderTextContainer(CreditsTextContainer, TextRender()->DefaultTextColor(), TextRender()->DefaultTextOutlineColor(), CreditsLabel.x, CreditsLabel.y);
+		TextRender()->DeleteTextContainer(CreditsTextContainer);
 	}
 
-	char aOrigin[128];
-	char aReplacement[128];
-	CLineReader LineReader;
-	LineReader.Init(File);
-	char *pLine;
-	while((pLine = LineReader.Get()))
-	{
-		if(!str_length(pLine) || pLine[0] == '#') // skip empty lines and comments
-			continue;
-
-		str_copy(aOrigin, pLine, sizeof(aOrigin));
-
-		pLine = LineReader.Get();
-		if(!pLine)
-		{
-			pConsole->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "localization", "unexpected end of index file");
-			break;
-		}
-
-		if(pLine[0] != '=' || pLine[1] != '=' || pLine[2] != ' ')
-		{
-			char aBuf[128];
-			str_format(aBuf, sizeof(aBuf), "malform replacement for index '%s'", aOrigin);
-			pConsole->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "localization", aBuf);
-			(void)LineReader.Get();
-			continue;
-		}
-		str_copy(aReplacement, pLine + 3, sizeof(aReplacement));
-
-		pLine = LineReader.Get();
-		if(!pLine)
-		{
-			pConsole->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "localization", "unexpected end of index file");
-			break;
-		}
-
-		if(pLine[0] != '=' || pLine[1] != '=' || pLine[2] != ' ')
-		{
-			char aBuf[128];
-			str_format(aBuf, sizeof(aBuf), "malform replacement for index '%s'", aOrigin);
-			pConsole->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "localization", aBuf);
-			continue;
-		}
-
-		char aFileName[IO_MAX_PATH_LENGTH];
-		str_format(aFileName, sizeof(aFileName), "languages/%s.txt", aOrigin);
-		vLanguages.emplace_back(aReplacement, aFileName, str_toint(pLine + 3));
-	}
-	io_close(File);
+	s_CreditsScrollRegion.End();
 }
 
-void CMenus::RenderLanguageSelection(CUIRect MainView)
+bool CMenus::RenderLanguageSelection(CUIRect MainView)
 {
-	static int s_LanguageList = 0;
-	static int s_SelectedLanguage = 0;
-	static std::vector<CLanguage> s_vLanguages;
-	static float s_ScrollValue = 0;
+	static int s_SelectedLanguage = -2; // -2 = unloaded, -1 = unset
+	static CListBox s_ListBox;
 
-	if(s_vLanguages.empty())
+	if(s_SelectedLanguage == -2)
 	{
-		s_vLanguages.emplace_back("English", "", 826);
-		LoadLanguageIndexfile(Storage(), Console(), s_vLanguages);
-		std::sort(s_vLanguages.begin(), s_vLanguages.end());
-		for(size_t i = 0; i < s_vLanguages.size(); i++)
-			if(str_comp(s_vLanguages[i].m_FileName.c_str(), g_Config.m_ClLanguagefile) == 0)
+		s_SelectedLanguage = -1;
+		for(size_t i = 0; i < g_Localization.Languages().size(); i++)
+		{
+			if(str_comp(g_Localization.Languages()[i].m_Filename.c_str(), g_Config.m_ClLanguagefile) == 0)
 			{
 				s_SelectedLanguage = i;
+				s_ListBox.ScrollToSelected();
 				break;
 			}
-	}
-
-	int OldSelected = s_SelectedLanguage;
-
-	UiDoListboxStart(&s_LanguageList, &MainView, 24.0f, Localize("Language"), "", s_vLanguages.size(), 1, s_SelectedLanguage, s_ScrollValue);
-
-	for(auto &Language : s_vLanguages)
-	{
-		CListboxItem Item = UiDoListboxNextItem(&Language.m_Name);
-		if(Item.m_Visible)
-		{
-			CUIRect Rect;
-			Item.m_Rect.VSplitLeft(Item.m_Rect.h * 2.0f, &Rect, &Item.m_Rect);
-			Rect.VMargin(6.0f, &Rect);
-			Rect.HMargin(3.0f, &Rect);
-			ColorRGBA Color(1.0f, 1.0f, 1.0f, 1.0f);
-			m_pClient->m_CountryFlags.Render(Language.m_CountryCode, &Color, Rect.x, Rect.y, Rect.w, Rect.h);
-			Item.m_Rect.HSplitTop(2.0f, 0, &Item.m_Rect);
-			UI()->DoLabel(&Item.m_Rect, Language.m_Name.c_str(), 16.0f, TEXTALIGN_LEFT);
 		}
 	}
 
-	s_SelectedLanguage = UiDoListboxEnd(&s_ScrollValue, 0);
+	const int OldSelected = s_SelectedLanguage;
+
+	s_ListBox.DoStart(24.0f, g_Localization.Languages().size(), 1, 3, s_SelectedLanguage, &MainView);
+
+	for(const auto &Language : g_Localization.Languages())
+	{
+		const CListboxItem Item = s_ListBox.DoNextItem(&Language.m_Name, s_SelectedLanguage != -1 && !str_comp(g_Localization.Languages()[s_SelectedLanguage].m_Name.c_str(), Language.m_Name.c_str()));
+		if(!Item.m_Visible)
+			continue;
+
+		CUIRect FlagRect, Label;
+		Item.m_Rect.VSplitLeft(Item.m_Rect.h * 2.0f, &FlagRect, &Label);
+		FlagRect.VMargin(6.0f, &FlagRect);
+		FlagRect.HMargin(3.0f, &FlagRect);
+		GameClient()->m_CountryFlags.Render(Language.m_CountryCode, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f), FlagRect.x, FlagRect.y, FlagRect.w, FlagRect.h);
+
+		Ui()->DoLabel(&Label, Language.m_Name.c_str(), 16.0f, TEXTALIGN_ML);
+	}
+
+	s_SelectedLanguage = s_ListBox.DoEnd();
 
 	if(OldSelected != s_SelectedLanguage)
 	{
-		str_copy(g_Config.m_ClLanguagefile, s_vLanguages[s_SelectedLanguage].m_FileName.c_str(), sizeof(g_Config.m_ClLanguagefile));
-		g_Localization.Load(s_vLanguages[s_SelectedLanguage].m_FileName.c_str(), Storage(), Console());
+		str_copy(g_Config.m_ClLanguagefile, g_Localization.Languages()[s_SelectedLanguage].m_Filename.c_str());
 		GameClient()->OnLanguageChange();
 	}
+
+	return s_ListBox.WasItemActivated();
 }
 
 void CMenus::RenderSettings(CUIRect MainView)
 {
 	// render background
-	CUIRect Temp, TabBar, RestartWarning;
+	CUIRect Button, TabBar, RestartBar;
 	MainView.VSplitRight(120.0f, &MainView, &TabBar);
-	RenderTools()->DrawUIRect(&MainView, ms_ColorTabbarActive, CUI::CORNER_B, 10.0f);
-	MainView.Margin(10.0f, &MainView);
-	MainView.HSplitBottom(15.0f, &MainView, &RestartWarning);
-	TabBar.HSplitTop(50.0f, &Temp, &TabBar);
-	RenderTools()->DrawUIRect(&Temp, ms_ColorTabbarActive, CUI::CORNER_BR, 10.0f);
+	MainView.Draw(ms_ColorTabbarActive, IGraphics::CORNER_B, 10.0f);
+	MainView.Margin(20.0f, &MainView);
 
-	MainView.HSplitTop(10.0f, 0, &MainView);
+	const bool NeedRestart = m_NeedRestartGraphics || m_NeedRestartSound || m_NeedRestartUpdate;
+	if(NeedRestart)
+	{
+		MainView.HSplitBottom(20.0f, &MainView, &RestartBar);
+		MainView.HSplitBottom(10.0f, &MainView, nullptr);
+	}
 
-	CUIRect Button;
+	TabBar.HSplitTop(50.0f, &Button, &TabBar);
+	Button.Draw(ms_ColorTabbarActive, IGraphics::CORNER_BR, 10.0f);
 
-	const char *aTabs[] = {
+	const char *apTabs[SETTINGS_LENGTH] = {
 		Localize("Language"),
 		Localize("General"),
 		Localize("Player"),
-		("Tee"),
-		Localize("HUD"),
+		Client()->IsSixup() ? "Tee 0.7" : Localize("Tee"),
+		Localize("Appearance"),
 		Localize("Controls"),
 		Localize("Graphics"),
 		Localize("Sound"),
 		Localize("DDNet"),
 		Localize("Assets")};
+	static CButtonContainer s_aTabButtons[SETTINGS_LENGTH];
 
-	int NumTabs = (int)std::size(aTabs);
-	int PreviousPage = g_Config.m_UiSettingsPage;
-
-	for(int i = 0; i < NumTabs; i++)
+	for(int i = 0; i < SETTINGS_LENGTH; i++)
 	{
-		TabBar.HSplitTop(10, &Button, &TabBar);
-		TabBar.HSplitTop(26, &Button, &TabBar);
-		if(DoButton_MenuTab(aTabs[i], aTabs[i], g_Config.m_UiSettingsPage == i, &Button, CUI::CORNER_R, &m_aAnimatorsSettingsTab[i]))
+		TabBar.HSplitTop(10.0f, nullptr, &TabBar);
+		TabBar.HSplitTop(26.0f, &Button, &TabBar);
+		if(DoButton_MenuTab(&s_aTabButtons[i], apTabs[i], g_Config.m_UiSettingsPage == i, &Button, IGraphics::CORNER_R, &m_aAnimatorsSettingsTab[i]))
 			g_Config.m_UiSettingsPage = i;
 	}
 
-	if(PreviousPage != g_Config.m_UiSettingsPage)
-		ms_ColorPicker.m_Active = false;
-
-	MainView.Margin(10.0f, &MainView);
-
 	if(g_Config.m_UiSettingsPage == SETTINGS_LANGUAGE)
 	{
-		m_pBackground->ChangePosition(CMenuBackground::POS_SETTINGS_LANGUAGE);
-		RenderLanguageSelection(MainView);
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_LANGUAGE);
+		RenderLanguageSettings(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_GENERAL)
 	{
-		m_pBackground->ChangePosition(CMenuBackground::POS_SETTINGS_GENERAL);
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GENERAL);
 		RenderSettingsGeneral(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_PLAYER)
 	{
-		m_pBackground->ChangePosition(CMenuBackground::POS_SETTINGS_PLAYER);
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_PLAYER);
 		RenderSettingsPlayer(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_TEE)
 	{
-		m_pBackground->ChangePosition(CMenuBackground::POS_SETTINGS_TEE);
-		RenderSettingsTee(MainView);
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_TEE);
+		if(Client()->IsSixup())
+			RenderSettingsTee7(MainView);
+		else
+			RenderSettingsTee(MainView);
 	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_HUD)
+	else if(g_Config.m_UiSettingsPage == SETTINGS_APPEARANCE)
 	{
-		m_pBackground->ChangePosition(CMenuBackground::POS_SETTINGS_HUD);
-		RenderSettingsHUD(MainView);
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_APPEARANCE);
+		RenderSettingsAppearance(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_CONTROLS)
 	{
-		m_pBackground->ChangePosition(CMenuBackground::POS_SETTINGS_CONTROLS);
-		RenderSettingsControls(MainView);
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_CONTROLS);
+		m_MenusSettingsControls.Render(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_GRAPHICS)
 	{
-		m_pBackground->ChangePosition(CMenuBackground::POS_SETTINGS_GRAPHICS);
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GRAPHICS);
 		RenderSettingsGraphics(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_SOUND)
 	{
-		m_pBackground->ChangePosition(CMenuBackground::POS_SETTINGS_SOUND);
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_SOUND);
 		RenderSettingsSound(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_DDNET)
 	{
-		m_pBackground->ChangePosition(CMenuBackground::POS_SETTINGS_DDNET);
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_DDNET);
 		RenderSettingsDDNet(MainView);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_ASSETS)
 	{
-		m_pBackground->ChangePosition(CMenuBackground::POS_SETTINGS_ASSETS);
+		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_ASSETS);
 		RenderSettingsCustom(MainView);
 	}
-
-	if(m_NeedRestartUpdate)
+	else
 	{
-		TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
-		UI()->DoLabel(&RestartWarning, Localize("DDNet Client needs to be restarted to complete update!"), 14.0f, TEXTALIGN_LEFT);
-		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+		dbg_assert_failed("ui_settings_page invalid");
 	}
-	else if(m_NeedRestartGeneral || m_NeedRestartSkins || m_NeedRestartGraphics || m_NeedRestartSound || m_NeedRestartDDNet)
-		UI()->DoLabel(&RestartWarning, Localize("You must restart the game for all settings to take effect."), 14.0f, TEXTALIGN_LEFT);
 
-	RenderColorPicker();
-}
-
-ColorHSLA CMenus::RenderHSLColorPicker(const CUIRect *pRect, unsigned int *pColor, bool Alpha)
-{
-	ColorHSLA HSLColor(*pColor, false);
-	ColorRGBA RGBColor = color_cast<ColorRGBA>(HSLColor);
-
-	ColorRGBA Outline(1, 1, 1, 0.25f);
-	const float OutlineSize = 3.0f;
-	Outline.a *= UI()->ButtonColorMul(pColor);
-
-	CUIRect Rect;
-	pRect->Margin(OutlineSize, &Rect);
-
-	RenderTools()->DrawUIRect(pRect, Outline, CUI::CORNER_ALL, 4.0f);
-	RenderTools()->DrawUIRect(&Rect, RGBColor, CUI::CORNER_ALL, 4.0f);
-
-	if(UI()->DoButtonLogic(pColor, 0, pRect))
+	if(NeedRestart)
 	{
-		if(ms_ColorPicker.m_Active)
+		CUIRect RestartWarning, RestartButton;
+		RestartBar.VSplitRight(125.0f, &RestartWarning, &RestartButton);
+		RestartWarning.VSplitRight(10.0f, &RestartWarning, nullptr);
+		if(m_NeedRestartUpdate)
 		{
-			CUIRect PickerRect;
-			PickerRect.x = ms_ColorPicker.m_X;
-			PickerRect.y = ms_ColorPicker.m_Y;
-			PickerRect.w = ms_ColorPicker.ms_Width;
-			PickerRect.h = ms_ColorPicker.ms_Height;
-
-			if(ms_ColorPicker.m_pColor == pColor || UI()->MouseInside(&PickerRect))
-				return HSLColor;
+			TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
+			Ui()->DoLabel(&RestartWarning, Localize("DDNet Client needs to be restarted to complete update!"), 14.0f, TEXTALIGN_ML);
+			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
+		}
+		else
+		{
+			Ui()->DoLabel(&RestartWarning, Localize("You must restart the game for all settings to take effect."), 14.0f, TEXTALIGN_ML);
 		}
 
-		CUIRect *pScreen = UI()->Screen();
-		ms_ColorPicker.m_X = minimum(UI()->MouseX(), pScreen->w - ms_ColorPicker.ms_Width);
-		ms_ColorPicker.m_Y = minimum(UI()->MouseY(), pScreen->h - ms_ColorPicker.ms_Height);
-		ms_ColorPicker.m_pColor = pColor;
-		ms_ColorPicker.m_Active = true;
-		ms_ColorPicker.m_AttachedRect = *pRect;
-		ms_ColorPicker.m_HSVColor = color_cast<ColorHSVA, ColorHSLA>(HSLColor).Pack(false);
+		static CButtonContainer s_RestartButton;
+		if(DoButton_Menu(&s_RestartButton, Localize("Restart"), 0, &RestartButton))
+		{
+			if(Client()->State() == IClient::STATE_ONLINE || GameClient()->Editor()->HasUnsavedData())
+			{
+				m_Popup = POPUP_RESTART;
+			}
+			else
+			{
+				Client()->Restart();
+			}
+		}
 	}
-
-	return HSLColor;
 }
 
-ColorHSLA CMenus::RenderHSLScrollbars(CUIRect *pRect, unsigned int *pColor, bool Alpha, bool ClampedLight)
+bool CMenus::RenderHslaScrollbars(CUIRect *pRect, unsigned int *pColor, bool Alpha, float DarkestLight)
 {
+	const unsigned PrevPackedColor = *pColor;
 	ColorHSLA Color(*pColor, Alpha);
-	CUIRect Preview, Button, Label;
-	char aBuf[32];
-	float *paComponent[] = {&Color.h, &Color.s, &Color.l, &Color.a};
-	const char *aLabels[] = {Localize("Hue"), Localize("Sat."), Localize("Lht."), Localize("Alpha")};
+	const ColorHSLA OriginalColor = Color;
+	const char *apLabels[] = {Localize("Hue"), Localize("Sat."), Localize("Lht."), Localize("Alpha")};
+	const float SizePerEntry = 20.0f;
+	const float MarginPerEntry = 5.0f;
+	const float PreviewMargin = 2.5f;
+	const float PreviewHeight = 40.0f + 2 * PreviewMargin;
+	const float OffY = (SizePerEntry + MarginPerEntry) * (3 + (Alpha ? 1 : 0)) - PreviewHeight;
 
-	float SizePerEntry = 20.0f;
-	float MarginPerEntry = 5.0f;
+	CUIRect Preview;
+	pRect->VSplitLeft(PreviewHeight, &Preview, pRect);
+	Preview.HSplitTop(OffY / 2.0f, nullptr, &Preview);
+	Preview.HSplitTop(PreviewHeight, &Preview, nullptr);
 
-	float OffY = (SizePerEntry + MarginPerEntry) * (3 + (Alpha ? 1 : 0)) - 40.0f;
-	pRect->VSplitLeft(40.0f, &Preview, pRect);
-	Preview.HSplitTop(OffY / 2.0f, NULL, &Preview);
-	Preview.HSplitTop(40.0f, &Preview, NULL);
+	Preview.Draw(ColorRGBA(0.15f, 0.15f, 0.15f, 1.0f), IGraphics::CORNER_ALL, 4.0f + PreviewMargin);
+	Preview.Margin(PreviewMargin, &Preview);
+	Preview.Draw(color_cast<ColorRGBA>(Color.UnclampLighting(DarkestLight)), IGraphics::CORNER_ALL, 4.0f + PreviewMargin);
 
-	Graphics()->TextureClear();
-	{
-		const float SizeBorder = 5.0f;
-		Graphics()->SetColor(ColorRGBA(0.15f, 0.15f, 0.15f, 1));
-		int TmpCont = RenderTools()->CreateRoundRectQuadContainer(Preview.x - SizeBorder / 2.0f, Preview.y - SizeBorder / 2.0f, Preview.w + SizeBorder, Preview.h + SizeBorder, 4.0f + SizeBorder / 2.0f, CUI::CORNER_ALL);
-		Graphics()->RenderQuadContainer(TmpCont, -1);
-		Graphics()->DeleteQuadContainer(TmpCont);
-	}
-	ColorHSLA RenderColorHSLA(Color.r, Color.g, Color.b, Color.a);
-	if(ClampedLight)
-		RenderColorHSLA = RenderColorHSLA.UnclampLighting();
-	Graphics()->SetColor(color_cast<ColorRGBA>(RenderColorHSLA));
-	int TmpCont = RenderTools()->CreateRoundRectQuadContainer(Preview.x, Preview.y, Preview.w, Preview.h, 4.0f, CUI::CORNER_ALL);
-	Graphics()->RenderQuadContainer(TmpCont, -1);
-	Graphics()->DeleteQuadContainer(TmpCont);
-
-	auto &&RenderHSLColorsRect = [&](CUIRect *pColorRect) {
-		Graphics()->TextureClear();
-		Graphics()->TrianglesBegin();
-
+	auto &&RenderHueRect = [&](CUIRect *pColorRect) {
 		float CurXOff = pColorRect->x;
-		float SizeColor = pColorRect->w / 6;
+		const float SizeColor = pColorRect->w / 6;
 
 		// red to yellow
 		{
-			IGraphics::CColorVertex Array[4] = {
+			IGraphics::CColorVertex aColorVertices[] = {
 				IGraphics::CColorVertex(0, 1, 0, 0, 1),
 				IGraphics::CColorVertex(1, 1, 1, 0, 1),
 				IGraphics::CColorVertex(2, 1, 0, 0, 1),
 				IGraphics::CColorVertex(3, 1, 1, 0, 1)};
-			Graphics()->SetColorVertex(Array, 4);
+			Graphics()->SetColorVertex(aColorVertices, std::size(aColorVertices));
 
 			IGraphics::CFreeformItem Freeform(
 				CurXOff, pColorRect->y,
@@ -2226,12 +1587,12 @@ ColorHSLA CMenus::RenderHSLScrollbars(CUIRect *pRect, unsigned int *pColor, bool
 		// yellow to green
 		CurXOff += SizeColor;
 		{
-			IGraphics::CColorVertex Array[4] = {
+			IGraphics::CColorVertex aColorVertices[] = {
 				IGraphics::CColorVertex(0, 1, 1, 0, 1),
 				IGraphics::CColorVertex(1, 0, 1, 0, 1),
 				IGraphics::CColorVertex(2, 1, 1, 0, 1),
 				IGraphics::CColorVertex(3, 0, 1, 0, 1)};
-			Graphics()->SetColorVertex(Array, 4);
+			Graphics()->SetColorVertex(aColorVertices, std::size(aColorVertices));
 
 			IGraphics::CFreeformItem Freeform(
 				CurXOff, pColorRect->y,
@@ -2244,12 +1605,12 @@ ColorHSLA CMenus::RenderHSLScrollbars(CUIRect *pRect, unsigned int *pColor, bool
 		CurXOff += SizeColor;
 		// green to turquoise
 		{
-			IGraphics::CColorVertex Array[4] = {
+			IGraphics::CColorVertex aColorVertices[] = {
 				IGraphics::CColorVertex(0, 0, 1, 0, 1),
 				IGraphics::CColorVertex(1, 0, 1, 1, 1),
 				IGraphics::CColorVertex(2, 0, 1, 0, 1),
 				IGraphics::CColorVertex(3, 0, 1, 1, 1)};
-			Graphics()->SetColorVertex(Array, 4);
+			Graphics()->SetColorVertex(aColorVertices, std::size(aColorVertices));
 
 			IGraphics::CFreeformItem Freeform(
 				CurXOff, pColorRect->y,
@@ -2262,12 +1623,12 @@ ColorHSLA CMenus::RenderHSLScrollbars(CUIRect *pRect, unsigned int *pColor, bool
 		CurXOff += SizeColor;
 		// turquoise to blue
 		{
-			IGraphics::CColorVertex Array[4] = {
+			IGraphics::CColorVertex aColorVertices[] = {
 				IGraphics::CColorVertex(0, 0, 1, 1, 1),
 				IGraphics::CColorVertex(1, 0, 0, 1, 1),
 				IGraphics::CColorVertex(2, 0, 1, 1, 1),
 				IGraphics::CColorVertex(3, 0, 0, 1, 1)};
-			Graphics()->SetColorVertex(Array, 4);
+			Graphics()->SetColorVertex(aColorVertices, std::size(aColorVertices));
 
 			IGraphics::CFreeformItem Freeform(
 				CurXOff, pColorRect->y,
@@ -2280,12 +1641,12 @@ ColorHSLA CMenus::RenderHSLScrollbars(CUIRect *pRect, unsigned int *pColor, bool
 		CurXOff += SizeColor;
 		// blue to purple
 		{
-			IGraphics::CColorVertex Array[4] = {
+			IGraphics::CColorVertex aColorVertices[] = {
 				IGraphics::CColorVertex(0, 0, 0, 1, 1),
 				IGraphics::CColorVertex(1, 1, 0, 1, 1),
 				IGraphics::CColorVertex(2, 0, 0, 1, 1),
 				IGraphics::CColorVertex(3, 1, 0, 1, 1)};
-			Graphics()->SetColorVertex(Array, 4);
+			Graphics()->SetColorVertex(aColorVertices, std::size(aColorVertices));
 
 			IGraphics::CFreeformItem Freeform(
 				CurXOff, pColorRect->y,
@@ -2298,12 +1659,12 @@ ColorHSLA CMenus::RenderHSLScrollbars(CUIRect *pRect, unsigned int *pColor, bool
 		CurXOff += SizeColor;
 		// purple to red
 		{
-			IGraphics::CColorVertex Array[4] = {
+			IGraphics::CColorVertex aColorVertices[] = {
 				IGraphics::CColorVertex(0, 1, 0, 1, 1),
 				IGraphics::CColorVertex(1, 1, 0, 0, 1),
 				IGraphics::CColorVertex(2, 1, 0, 1, 1),
 				IGraphics::CColorVertex(3, 1, 0, 0, 1)};
-			Graphics()->SetColorVertex(Array, 4);
+			Graphics()->SetColorVertex(aColorVertices, std::size(aColorVertices));
 
 			IGraphics::CFreeformItem Freeform(
 				CurXOff, pColorRect->y,
@@ -2312,379 +1673,328 @@ ColorHSLA CMenus::RenderHSLScrollbars(CUIRect *pRect, unsigned int *pColor, bool
 				CurXOff + SizeColor, pColorRect->y + pColorRect->h);
 			Graphics()->QuadsDrawFreeform(&Freeform, 1);
 		}
-
-		Graphics()->TrianglesEnd();
 	};
 
-	auto &&RenderHSLSatRect = [&](CUIRect *pColorRect, ColorRGBA &CurColor) {
-		Graphics()->TextureClear();
-		Graphics()->TrianglesBegin();
-
-		float CurXOff = pColorRect->x;
-		float SizeColor = pColorRect->w;
-
-		ColorHSLA RightColor = color_cast<ColorHSLA>(CurColor);
+	auto &&RenderSaturationRect = [&](CUIRect *pColorRect, const ColorRGBA &CurColor) {
 		ColorHSLA LeftColor = color_cast<ColorHSLA>(CurColor);
+		ColorHSLA RightColor = color_cast<ColorHSLA>(CurColor);
 
-		LeftColor.g = 0;
-		RightColor.g = 1;
+		LeftColor.s = 0.0f;
+		RightColor.s = 1.0f;
 
-		ColorRGBA RightColorRGBA = color_cast<ColorRGBA>(RightColor);
-		ColorRGBA LeftColorRGBA = color_cast<ColorRGBA>(LeftColor);
+		const ColorRGBA LeftColorRGBA = color_cast<ColorRGBA>(LeftColor);
+		const ColorRGBA RightColorRGBA = color_cast<ColorRGBA>(RightColor);
 
-		// saturation
-		{
-			IGraphics::CColorVertex Array[4] = {
-				IGraphics::CColorVertex(0, LeftColorRGBA.r, LeftColorRGBA.g, LeftColorRGBA.b, 1),
-				IGraphics::CColorVertex(1, RightColorRGBA.r, RightColorRGBA.g, RightColorRGBA.b, 1),
-				IGraphics::CColorVertex(2, LeftColorRGBA.r, LeftColorRGBA.g, LeftColorRGBA.b, 1),
-				IGraphics::CColorVertex(3, RightColorRGBA.r, RightColorRGBA.g, RightColorRGBA.b, 1)};
-			Graphics()->SetColorVertex(Array, 4);
+		Graphics()->SetColor4(LeftColorRGBA, RightColorRGBA, RightColorRGBA, LeftColorRGBA);
 
-			IGraphics::CFreeformItem Freeform(
-				CurXOff, pColorRect->y,
-				CurXOff + SizeColor, pColorRect->y,
-				CurXOff, pColorRect->y + pColorRect->h,
-				CurXOff + SizeColor, pColorRect->y + pColorRect->h);
-			Graphics()->QuadsDrawFreeform(&Freeform, 1);
-		}
-
-		Graphics()->TrianglesEnd();
+		IGraphics::CFreeformItem Freeform(
+			pColorRect->x, pColorRect->y,
+			pColorRect->x + pColorRect->w, pColorRect->y,
+			pColorRect->x, pColorRect->y + pColorRect->h,
+			pColorRect->x + pColorRect->w, pColorRect->y + pColorRect->h);
+		Graphics()->QuadsDrawFreeform(&Freeform, 1);
 	};
 
-	auto &&RenderHSLLightRect = [&](CUIRect *pColorRect, ColorRGBA &CurColorSat) {
-		Graphics()->TextureClear();
-		Graphics()->TrianglesBegin();
+	auto &&RenderLightingRect = [&](CUIRect *pColorRect, const ColorRGBA &CurColor) {
+		ColorHSLA LeftColor = color_cast<ColorHSLA>(CurColor);
+		ColorHSLA RightColor = color_cast<ColorHSLA>(CurColor);
 
-		float CurXOff = pColorRect->x;
-		float SizeColor = pColorRect->w / (ClampedLight ? 1.0f : 2.0f);
+		LeftColor.l = DarkestLight;
+		RightColor.l = 1.0f;
 
-		ColorHSLA RightColor = color_cast<ColorHSLA>(CurColorSat);
-		ColorHSLA LeftColor = color_cast<ColorHSLA>(CurColorSat);
+		const ColorRGBA LeftColorRGBA = color_cast<ColorRGBA>(LeftColor);
+		const ColorRGBA RightColorRGBA = color_cast<ColorRGBA>(RightColor);
 
-		LeftColor.b = ColorHSLA::DARKEST_LGT;
-		RightColor.b = 1;
+		Graphics()->SetColor4(LeftColorRGBA, RightColorRGBA, RightColorRGBA, LeftColorRGBA);
 
-		ColorRGBA RightColorRGBA = color_cast<ColorRGBA>(RightColor);
-		ColorRGBA LeftColorRGBA = color_cast<ColorRGBA>(LeftColor);
-
-		if(!ClampedLight)
-			CurXOff += SizeColor;
-
-		// light
-		{
-			IGraphics::CColorVertex Array[4] = {
-				IGraphics::CColorVertex(0, LeftColorRGBA.r, LeftColorRGBA.g, LeftColorRGBA.b, 1),
-				IGraphics::CColorVertex(1, RightColorRGBA.r, RightColorRGBA.g, RightColorRGBA.b, 1),
-				IGraphics::CColorVertex(2, LeftColorRGBA.r, LeftColorRGBA.g, LeftColorRGBA.b, 1),
-				IGraphics::CColorVertex(3, RightColorRGBA.r, RightColorRGBA.g, RightColorRGBA.b, 1)};
-			Graphics()->SetColorVertex(Array, 4);
-
-			IGraphics::CFreeformItem Freeform(
-				CurXOff, pColorRect->y,
-				CurXOff + SizeColor, pColorRect->y,
-				CurXOff, pColorRect->y + pColorRect->h,
-				CurXOff + SizeColor, pColorRect->y + pColorRect->h);
-			Graphics()->QuadsDrawFreeform(&Freeform, 1);
-		}
-
-		if(!ClampedLight)
-		{
-			CurXOff -= SizeColor;
-			LeftColor.b = 0;
-			RightColor.b = ColorHSLA::DARKEST_LGT;
-
-			RightColorRGBA = color_cast<ColorRGBA>(RightColor);
-			LeftColorRGBA = color_cast<ColorRGBA>(LeftColor);
-
-			IGraphics::CColorVertex Array[4] = {
-				IGraphics::CColorVertex(0, LeftColorRGBA.r, LeftColorRGBA.g, LeftColorRGBA.b, 1),
-				IGraphics::CColorVertex(1, RightColorRGBA.r, RightColorRGBA.g, RightColorRGBA.b, 1),
-				IGraphics::CColorVertex(2, LeftColorRGBA.r, LeftColorRGBA.g, LeftColorRGBA.b, 1),
-				IGraphics::CColorVertex(3, RightColorRGBA.r, RightColorRGBA.g, RightColorRGBA.b, 1)};
-			Graphics()->SetColorVertex(Array, 4);
-
-			IGraphics::CFreeformItem Freeform(
-				CurXOff, pColorRect->y,
-				CurXOff + SizeColor, pColorRect->y,
-				CurXOff, pColorRect->y + pColorRect->h,
-				CurXOff + SizeColor, pColorRect->y + pColorRect->h);
-			Graphics()->QuadsDrawFreeform(&Freeform, 1);
-		}
-
-		Graphics()->TrianglesEnd();
+		IGraphics::CFreeformItem Freeform(
+			pColorRect->x, pColorRect->y,
+			pColorRect->x + pColorRect->w, pColorRect->y,
+			pColorRect->x, pColorRect->y + pColorRect->h,
+			pColorRect->x + pColorRect->w, pColorRect->y + pColorRect->h);
+		Graphics()->QuadsDrawFreeform(&Freeform, 1);
 	};
 
-	auto &&RenderHSLAlphaRect = [&](CUIRect *pColorRect, ColorRGBA &CurColorFull) {
-		Graphics()->TextureClear();
-		Graphics()->TrianglesBegin();
+	auto &&RenderAlphaRect = [&](CUIRect *pColorRect, const ColorRGBA &CurColorFull) {
+		const ColorRGBA LeftColorRGBA = color_cast<ColorRGBA>(color_cast<ColorHSLA>(CurColorFull).WithAlpha(0.0f));
+		const ColorRGBA RightColorRGBA = color_cast<ColorRGBA>(color_cast<ColorHSLA>(CurColorFull).WithAlpha(1.0f));
 
-		float CurXOff = pColorRect->x;
-		float SizeColor = pColorRect->w;
+		Graphics()->SetColor4(LeftColorRGBA, RightColorRGBA, RightColorRGBA, LeftColorRGBA);
 
-		ColorHSLA RightColor = color_cast<ColorHSLA>(CurColorFull);
-		ColorHSLA LeftColor = color_cast<ColorHSLA>(CurColorFull);
-
-		LeftColor.a = 0;
-		RightColor.a = 1;
-
-		ColorRGBA RightColorRGBA = color_cast<ColorRGBA>(RightColor);
-		ColorRGBA LeftColorRGBA = color_cast<ColorRGBA>(LeftColor);
-
-		// alpha
-		{
-			IGraphics::CColorVertex Array[4] = {
-				IGraphics::CColorVertex(0, LeftColorRGBA.r, LeftColorRGBA.g, LeftColorRGBA.b, LeftColorRGBA.a),
-				IGraphics::CColorVertex(1, RightColorRGBA.r, RightColorRGBA.g, RightColorRGBA.b, RightColorRGBA.a),
-				IGraphics::CColorVertex(2, LeftColorRGBA.r, LeftColorRGBA.g, LeftColorRGBA.b, LeftColorRGBA.a),
-				IGraphics::CColorVertex(3, RightColorRGBA.r, RightColorRGBA.g, RightColorRGBA.b, RightColorRGBA.a)};
-			Graphics()->SetColorVertex(Array, 4);
-
-			IGraphics::CFreeformItem Freeform(
-				CurXOff, pColorRect->y,
-				CurXOff + SizeColor, pColorRect->y,
-				CurXOff, pColorRect->y + pColorRect->h,
-				CurXOff + SizeColor, pColorRect->y + pColorRect->h);
-			Graphics()->QuadsDrawFreeform(&Freeform, 1);
-		}
-
-		Graphics()->TrianglesEnd();
+		IGraphics::CFreeformItem Freeform(
+			pColorRect->x, pColorRect->y,
+			pColorRect->x + pColorRect->w, pColorRect->y,
+			pColorRect->x, pColorRect->y + pColorRect->h,
+			pColorRect->x + pColorRect->w, pColorRect->y + pColorRect->h);
+		Graphics()->QuadsDrawFreeform(&Freeform, 1);
 	};
 
 	for(int i = 0; i < 3 + Alpha; i++)
 	{
+		CUIRect Button, Label;
 		pRect->HSplitTop(SizePerEntry, &Button, pRect);
-		pRect->HSplitTop(MarginPerEntry, NULL, pRect);
-		Button.VSplitLeft(10.0f, 0, &Button);
-		Button.VSplitLeft(100.0f, &Label, &Button);
+		pRect->HSplitTop(MarginPerEntry, nullptr, pRect);
+		Button.VSplitLeft(140.0f, &Label, &Button);
+		Label.VMargin(10.0f, &Label);
 
-		RenderTools()->DrawUIRect(&Button, ColorRGBA(0.15f, 0.15f, 0.15f, 1.0f), CUI::CORNER_ALL, 1.0f);
+		Button.Draw(ColorRGBA(0.15f, 0.15f, 0.15f, 1.0f), IGraphics::CORNER_ALL, 1.0f);
 
 		CUIRect Rail;
 		Button.Margin(2.0f, &Rail);
 
-		str_format(aBuf, sizeof(aBuf), "%s: %03d", aLabels[i], (int)(*paComponent[i] * 255));
-		UI()->DoLabel(&Label, aBuf, 14.0f, TEXTALIGN_LEFT);
+		char aBuf[32];
 
-		ColorHSLA CurColorPureHSLA(RenderColorHSLA.r, 1, 0.5f, 1);
-		ColorRGBA CurColorPure = color_cast<ColorRGBA>(CurColorPureHSLA);
-		ColorRGBA ColorInner(1, 1, 1, 0.25f);
+		// Hue
+		if(i == 0)
+			str_format(aBuf, sizeof(aBuf), "%s: %.1f° (%03d)", apLabels[i], Color[i] * 360.0f, round_to_int(Color[i] * 255.0f));
+		// Lht
+		else if(i == 2)
+		{
+			// handle internal light clamping, see `UnclampLighting`
+			float Lht = DarkestLight + Color[i] * (1.0f - DarkestLight);
+			str_format(aBuf, sizeof(aBuf), "%s: %.1f%% (%03d)", apLabels[i], Lht * 100.0f, round_to_int(Color[i] * 255.0f));
+		}
+		// Sat and Alpha
+		else
+			str_format(aBuf, sizeof(aBuf), "%s: %.1f%% (%03d)", apLabels[i], Color[i] * 100.0f, round_to_int(Color[i] * 255.0f));
+		Ui()->DoLabel(&Label, aBuf, 12.0f, TEXTALIGN_ML);
 
+		ColorRGBA HandleColor;
+		Graphics()->TextureClear();
+		Graphics()->TrianglesBegin();
 		if(i == 0)
 		{
-			ColorInner = CurColorPure;
-			RenderHSLColorsRect(&Rail);
+			RenderHueRect(&Rail);
+			HandleColor = color_cast<ColorRGBA>(ColorHSLA(Color.h, 1.0f, 0.5f, 1.0f));
 		}
 		else if(i == 1)
 		{
-			RenderHSLSatRect(&Rail, CurColorPure);
-			ColorInner = color_cast<ColorRGBA>(ColorHSLA(CurColorPureHSLA.r, *paComponent[1], CurColorPureHSLA.b, 1));
+			RenderSaturationRect(&Rail, color_cast<ColorRGBA>(ColorHSLA(Color.h, 1.0f, 0.5f, 1.0f)));
+			HandleColor = color_cast<ColorRGBA>(ColorHSLA(Color.h, Color.s, 0.5f, 1.0f));
 		}
 		else if(i == 2)
 		{
-			ColorRGBA CurColorSat = color_cast<ColorRGBA>(ColorHSLA(CurColorPureHSLA.r, *paComponent[1], 0.5f, 1));
-			RenderHSLLightRect(&Rail, CurColorSat);
-			float LightVal = *paComponent[2];
-			if(ClampedLight)
-				LightVal = ColorHSLA::DARKEST_LGT + LightVal * (1.0f - ColorHSLA::DARKEST_LGT);
-			ColorInner = color_cast<ColorRGBA>(ColorHSLA(CurColorPureHSLA.r, *paComponent[1], LightVal, 1));
+			RenderLightingRect(&Rail, color_cast<ColorRGBA>(ColorHSLA(Color.h, Color.s, 0.5f, 1.0f)));
+			HandleColor = color_cast<ColorRGBA>(ColorHSLA(Color.h, Color.s, Color.l, 1.0f).UnclampLighting(DarkestLight));
 		}
 		else if(i == 3)
 		{
-			ColorRGBA CurColorFull = color_cast<ColorRGBA>(ColorHSLA(CurColorPureHSLA.r, *paComponent[1], *paComponent[2], 1));
-			RenderHSLAlphaRect(&Rail, CurColorFull);
-			float LightVal = *paComponent[2];
-			if(ClampedLight)
-				LightVal = ColorHSLA::DARKEST_LGT + LightVal * (1.0f - ColorHSLA::DARKEST_LGT);
-			ColorInner = color_cast<ColorRGBA>(ColorHSLA(CurColorPureHSLA.r, *paComponent[1], LightVal, *paComponent[3]));
+			RenderAlphaRect(&Rail, color_cast<ColorRGBA>(ColorHSLA(Color.h, Color.s, Color.l, 1.0f).UnclampLighting(DarkestLight)));
+			HandleColor = color_cast<ColorRGBA>(Color.UnclampLighting(DarkestLight));
 		}
+		Graphics()->TrianglesEnd();
 
-		*paComponent[i] = UIEx()->DoScrollbarH(&((char *)pColor)[i], &Button, *paComponent[i], &ColorInner);
+		Color[i] = Ui()->DoScrollbarH(&((char *)pColor)[i], &Button, Color[i], &HandleColor);
 	}
 
-	*pColor = Color.Pack(Alpha);
-	return Color;
+	if(OriginalColor != Color)
+	{
+		*pColor = Color.Pack(Alpha);
+	}
+	return PrevPackedColor != *pColor;
 }
 
-void CMenus::RenderSettingsHUD(CUIRect MainView)
+enum
 {
+	APPEARANCE_TAB_HUD = 0,
+	APPEARANCE_TAB_CHAT = 1,
+	APPEARANCE_TAB_NAME_PLATE = 2,
+	APPEARANCE_TAB_HOOK_COLLISION = 3,
+	APPEARANCE_TAB_INFO_MESSAGES = 4,
+	APPEARANCE_TAB_LASER = 5,
+	NUMBER_OF_APPEARANCE_TABS = 6,
+};
+
+void CMenus::RenderSettingsAppearance(CUIRect MainView)
+{
+	char aBuf[128];
 	static int s_CurTab = 0;
 
-	CUIRect TabLabel1, TabLabel2, Column,
-		Section, SectionTwo;
+	CUIRect TabBar, LeftView, RightView, Button;
 
-	MainView.HSplitTop(20, &TabLabel1, &MainView);
-	TabLabel1.VSplitMid(&TabLabel1, &TabLabel2);
+	MainView.HSplitTop(20.0f, &TabBar, &MainView);
+	const float TabWidth = TabBar.w / (float)NUMBER_OF_APPEARANCE_TABS;
+	static CButtonContainer s_aPageTabs[NUMBER_OF_APPEARANCE_TABS] = {};
+	const char *apTabNames[NUMBER_OF_APPEARANCE_TABS] = {
+		Localize("HUD"),
+		Localize("Chat"),
+		Localize("Name Plate"),
+		Localize("Hook Collisions"),
+		Localize("Info Messages"),
+		Localize("Laser")};
 
-	static int s_aPageTabs[2] = {};
+	for(int Tab = APPEARANCE_TAB_HUD; Tab < NUMBER_OF_APPEARANCE_TABS; ++Tab)
+	{
+		TabBar.VSplitLeft(TabWidth, &Button, &TabBar);
+		const int Corners = Tab == APPEARANCE_TAB_HUD ? IGraphics::CORNER_L : (Tab == NUMBER_OF_APPEARANCE_TABS - 1 ? IGraphics::CORNER_R : IGraphics::CORNER_NONE);
+		if(DoButton_MenuTab(&s_aPageTabs[Tab], apTabNames[Tab], s_CurTab == Tab, &Button, Corners, nullptr, nullptr, nullptr, nullptr, 4.0f))
+		{
+			s_CurTab = Tab;
+		}
+	}
 
-	if(DoButton_MenuTab((void *)&s_aPageTabs[0], Localize("General"), s_CurTab == 0, &TabLabel1, 5, NULL, NULL, NULL, NULL, 4))
-		s_CurTab = 0;
-	if(DoButton_MenuTab((void *)&s_aPageTabs[1], Localize("Chat"), s_CurTab == 1, &TabLabel2, 10, NULL, NULL, NULL, NULL, 4))
-		s_CurTab = 1;
+	MainView.HSplitTop(10.0f, nullptr, &MainView);
 
-	MainView.HSplitTop(10.0f, 0x0, &MainView);
+	const float LineSize = 20.0f;
+	const float ColorPickerLineSize = 25.0f;
+	const float HeadlineFontSize = 20.0f;
+	const float HeadlineHeight = 30.0f;
+	const float MarginSmall = 5.0f;
+	const float MarginBetweenViews = 20.0f;
 
-	const float LineMargin = 20.0f;
+	const float ColorPickerLabelSize = 13.0f;
+	const float ColorPickerLineSpacing = 5.0f;
 
-	if(s_CurTab == 0)
-	{ // ***** GENERAL TAB ***** //
-
-		MainView.VSplitLeft(MainView.w * 0.55f, &MainView, &Column);
-
-		MainView.HSplitTop(30.0f, &Section, &MainView);
-		UI()->DoLabel(&Section, Localize("HUD"), 20.0f, TEXTALIGN_LEFT);
-		MainView.VSplitLeft(5.0f, 0x0, &MainView);
-		MainView.HSplitTop(5.0f, 0x0, &MainView);
+	if(s_CurTab == APPEARANCE_TAB_HUD)
+	{
+		MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
 
 		// ***** HUD ***** //
+		Ui()->DoLabel_AutoLineSize(Localize("HUD"), HeadlineFontSize,
+			TEXTALIGN_ML, &LeftView, HeadlineHeight);
+		LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
 
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhud, Localize("Show ingame HUD"), &g_Config.m_ClShowhud, &MainView, LineMargin);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClDDRaceHud, Localize("Use DDRace HUD"), &g_Config.m_ClDDRaceHud, &MainView, LineMargin);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClDDRaceScoreBoard, Localize("Use DDRace Scoreboard"), &g_Config.m_ClDDRaceScoreBoard, &MainView, LineMargin);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudDummyActions, Localize("Show dummy actions"), &g_Config.m_ClShowhudDummyActions, &MainView, LineMargin);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowFreezeBars, Localize("Show freeze bars"), &g_Config.m_ClShowFreezeBars, &MainView, LineMargin);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowIDs, Localize("Show client IDs"), &g_Config.m_ClShowIDs, &MainView, LineMargin);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudPlayerPosition, Localize("Show player position"), &g_Config.m_ClShowhudPlayerPosition, &MainView, LineMargin);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudPlayerSpeed, Localize("Show player speed"), &g_Config.m_ClShowhudPlayerSpeed, &MainView, LineMargin);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudPlayerAngle, Localize("Show player target angle"), &g_Config.m_ClShowhudPlayerAngle, &MainView, LineMargin);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudScore, Localize("Show score"), &g_Config.m_ClShowhudScore, &MainView, LineMargin);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudHealthAmmo, Localize("Show health + ammo"), &g_Config.m_ClShowhudHealthAmmo, &MainView, LineMargin);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowChat, Localize("Show chat"), &g_Config.m_ClShowChat, &MainView, LineMargin);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClChatTeamColors, Localize("Show names in chat in team colors"), &g_Config.m_ClChatTeamColors, &MainView, LineMargin);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowVotesAfterVoting, Localize("Show votes window after voting"), &g_Config.m_ClShowVotesAfterVoting, &MainView, LineMargin);
-		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowKillMessages, Localize("Show kill messages"), &g_Config.m_ClShowKillMessages, &MainView, LineMargin);
+		// Switch of the entire HUD
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhud, Localize("Show ingame HUD"), &g_Config.m_ClShowhud, &LeftView, LineSize);
 
-		MainView.HSplitTop(60.0f, 0x0, &MainView);
+		// Switches of the various normal HUD elements
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudHealthAmmo, Localize("Show health, shields and ammo"), &g_Config.m_ClShowhudHealthAmmo, &LeftView, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudScore, Localize("Show score"), &g_Config.m_ClShowhudScore, &LeftView, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowLocalTimeAlways, Localize("Show local time always"), &g_Config.m_ClShowLocalTimeAlways, &LeftView, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClSpecCursor, Localize("Show spectator cursor"), &g_Config.m_ClSpecCursor, &LeftView, LineSize);
 
-		// ***** Kill Messages ***** //
+		// Settings of the HUD element for votes
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowVotesAfterVoting, Localize("Show votes window after voting"), &g_Config.m_ClShowVotesAfterVoting, &LeftView, LineSize);
 
-		MainView.HSplitTop(30.0f, &Section, &MainView);
-		UI()->DoLabel(&Section, Localize("Kill Messages"), 20.0f, TEXTALIGN_LEFT);
-		MainView.VSplitLeft(5.0f, 0x0, &MainView);
+		// ***** Scoreboard ***** //
+		LeftView.HSplitTop(MarginBetweenViews, nullptr, &LeftView);
+		Ui()->DoLabel_AutoLineSize(Localize("Scoreboard"), HeadlineFontSize,
+			TEXTALIGN_ML, &LeftView, HeadlineHeight);
+		LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
 
-		MainView.HSplitTop(10.0f, 0x0, &MainView);
+		ColorRGBA GreenDefault(0.78f, 1.0f, 0.8f, 1.0f);
+		static CButtonContainer s_AuthedColor, s_SameClanColor;
+		DoLine_ColorPicker(&s_AuthedColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Authed name color in scoreboard"), &g_Config.m_ClAuthedPlayerColor, GreenDefault, false);
+		DoLine_ColorPicker(&s_SameClanColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Same clan color in scoreboard"), &g_Config.m_ClSameClanColor, GreenDefault, false);
 
-		static int KillMessageNormalColorID;
-		DoLine_ColorPicker(&KillMessageNormalColorID, 25.0f, 250.0f, 13.0f, 5.0f, &MainView, Localize("Kill Message Normal Color"), &g_Config.m_ClKillMessageNormalColor, ColorRGBA(1.0f, 1.0f, 1.0f), false);
+		// ***** DDRace HUD ***** //
+		Ui()->DoLabel_AutoLineSize(Localize("DDRace HUD"), HeadlineFontSize,
+			TEXTALIGN_ML, &RightView, HeadlineHeight);
+		RightView.HSplitTop(MarginSmall, nullptr, &RightView);
 
-		static int KillMessageHighlightColorID;
-		DoLine_ColorPicker(&KillMessageHighlightColorID, 25.0f, 250.0f, 13.0f, 5.0f, &MainView, Localize("Kill Message Highlight Color"), &g_Config.m_ClKillMessageHighlightColor, ColorRGBA(1.0f, 1.0f, 1.0f), false);
-
-		// ***** Laser ***** //
-
-		MainView = Column;
-
-		MainView.HSplitTop(30.0f, &Section, &MainView);
-		UI()->DoLabel(&Section, Localize("Laser"), 20.0f, TEXTALIGN_LEFT);
-		MainView.VSplitLeft(5.0f, 0x0, &MainView);
-		MainView.HSplitTop(5.0f, 0x0, &MainView);
-
-		MainView.HSplitTop(50.0f, &Section, &MainView);
-		Section.VSplitLeft(260.0f, &Section, 0x0);
-		MainView.HSplitTop(25.0f, &SectionTwo, &MainView);
-
-		static int LasterOutResetID, LaserInResetID;
-
-		ColorHSLA LaserOutlineColor = DoLine_ColorPicker(&LasterOutResetID, 25.0f, 180.0f, 13.0f, 5.0f, &SectionTwo, Localize("Laser Outline Color"), &g_Config.m_ClLaserOutlineColor, ColorRGBA(0.074402f, 0.074402f, 0.247166f, 1.0f), false);
-
-		MainView.HSplitTop(5.0f, 0x0, &MainView);
-		MainView.HSplitTop(25.0f, &SectionTwo, &MainView);
-
-		ColorHSLA LaserInnerColor = DoLine_ColorPicker(&LaserInResetID, 25.0f, 180.0f, 13.0f, 5.0f, &SectionTwo, Localize("Laser Inner Color"), &g_Config.m_ClLaserInnerColor, ColorRGBA(0.498039f, 0.498039f, 1.0f, 1.0f), false);
-
-		Section.VSplitLeft(30.0f, 0, &Section);
-
-		DoLaserPreview(&Section, LaserOutlineColor, LaserInnerColor);
-
-		MainView.HSplitTop(25.0f, 0x0, &MainView);
-		MainView.HSplitTop(20.0f, &SectionTwo, &MainView);
-
-		UI()->DoLabel(&SectionTwo, Localize("Hookline"), 20.0f, TEXTALIGN_LEFT);
-
-		MainView.Margin(5.0f, &MainView);
-
+		// Switches of various DDRace HUD elements
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowIds, Localize("Show client IDs (scoreboard, chat, spectator)"), &g_Config.m_ClShowIds, &RightView, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudDDRace, Localize("Show DDRace HUD"), &g_Config.m_ClShowhudDDRace, &RightView, LineSize);
+		if(g_Config.m_ClShowhudDDRace)
 		{
-			CUIRect Button, Label;
-			MainView.HSplitTop(5.0f, &Button, &MainView);
-			MainView.HSplitTop(20.0f, &Button, &MainView);
-			Button.VSplitLeft(45.0f, &Label, &Button);
-			UI()->DoLabel(&Label, Localize("Size"), 14.0f, TEXTALIGN_LEFT);
-			g_Config.m_ClHookCollSize = (int)(UIEx()->DoScrollbarH(&g_Config.m_ClHookCollSize, &Button, g_Config.m_ClHookCollSize / 20.0f) * 20.0f);
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudJumpsIndicator, Localize("Show jumps indicator"), &g_Config.m_ClShowhudJumpsIndicator, &RightView, LineSize);
+		}
+		else
+		{
+			RightView.HSplitTop(LineSize, nullptr, &RightView); // Create empty space for hidden option
 		}
 
+		// Eye with a number of spectators
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudSpectatorCount, Localize("Show number of spectators"), &g_Config.m_ClShowhudSpectatorCount, &RightView, LineSize);
+
+		// Switch for dummy actions display
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudDummyActions, Localize("Show dummy actions"), &g_Config.m_ClShowhudDummyActions, &RightView, LineSize);
+
+		// Player movement information display settings
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudPlayerPosition, Localize("Show player position"), &g_Config.m_ClShowhudPlayerPosition, &RightView, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudPlayerSpeed, Localize("Show player speed"), &g_Config.m_ClShowhudPlayerSpeed, &RightView, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowhudPlayerAngle, Localize("Show player target angle"), &g_Config.m_ClShowhudPlayerAngle, &RightView, LineSize);
+
+		// Freeze bar settings
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowFreezeBars, Localize("Show freeze bars"), &g_Config.m_ClShowFreezeBars, &RightView, LineSize);
+		RightView.HSplitTop(LineSize * 2.0f, &Button, &RightView);
+		if(g_Config.m_ClShowFreezeBars)
 		{
-			CUIRect Button, Label;
-			MainView.HSplitTop(5.0f, &Button, &MainView);
-			MainView.HSplitTop(20.0f, &Button, &MainView);
-			Button.VSplitLeft(45.0f, &Label, &Button);
-			UI()->DoLabel(&Label, Localize("Alpha"), 14.0f, TEXTALIGN_LEFT);
-			g_Config.m_ClHookCollAlpha = (int)(UIEx()->DoScrollbarH(&g_Config.m_ClHookCollAlpha, &Button, g_Config.m_ClHookCollAlpha / 100.0f) * 100.0f);
+			Ui()->DoScrollbarOption(&g_Config.m_ClFreezeBarsAlphaInsideFreeze, &g_Config.m_ClFreezeBarsAlphaInsideFreeze, &Button, Localize("Opacity of freeze bars inside freeze"), 0, 100, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_MULTILINE, "%");
 		}
-		MainView.HSplitTop(5.0f, 0x0, &MainView);
-		MainView.HSplitTop(25.0f, &SectionTwo, &MainView);
-
-		static int HookCollNoCollResetID, HookCollHookableCollResetID, HookCollTeeCollResetID;
-		DoLine_ColorPicker(&HookCollNoCollResetID, 25.0f, 180.0f, 13.0f, 5.0f, &SectionTwo, Localize("No hit"), &g_Config.m_ClHookCollColorNoColl, ColorRGBA(1.0f, 0.0f, 0.0f, 1.0f), false);
-
-		MainView.HSplitTop(5.0f, 0x0, &MainView);
-		MainView.HSplitTop(25.0f, &SectionTwo, &MainView);
-
-		DoLine_ColorPicker(&HookCollHookableCollResetID, 25.0f, 180.0f, 13.0f, 5.0f, &SectionTwo, Localize("Hookable"), &g_Config.m_ClHookCollColorHookableColl, ColorRGBA(130.0f / 255.0f, 232.0f / 255.0f, 160.0f / 255.0f, 1.0f), false);
-
-		MainView.HSplitTop(5.0f, 0x0, &MainView);
-		MainView.HSplitTop(25.0f, &SectionTwo, &MainView);
-
-		DoLine_ColorPicker(&HookCollTeeCollResetID, 25.0f, 180.0f, 13.0f, 5.0f, &SectionTwo, Localize("Tee"), &g_Config.m_ClHookCollColorTeeColl, ColorRGBA(1.0f, 1.0f, 0.0f, 1.0f), false);
 	}
-	else if(s_CurTab == 1)
-	{ // ***** CHAT TAB ***** //
+	else if(s_CurTab == APPEARANCE_TAB_CHAT)
+	{
+		CChat &Chat = GameClient()->m_Chat;
+		CUIRect TopView, PreviewView;
+		MainView.HSplitBottom(220.0f, &TopView, &PreviewView);
+		TopView.HSplitBottom(MarginBetweenViews, &TopView, nullptr);
+		TopView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
 
-		MainView.VSplitMid(&MainView, &Column);
+		// ***** Chat ***** //
+		Ui()->DoLabel_AutoLineSize(Localize("Chat"), HeadlineFontSize,
+			TEXTALIGN_ML, &LeftView, HeadlineHeight);
+		LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
 
-		if(DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClChatOld, Localize("Use old chat style"), &g_Config.m_ClChatOld, &MainView, LineMargin))
+		// General chat settings
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(DoButton_CheckBox(&g_Config.m_ClShowChat, Localize("Show chat"), g_Config.m_ClShowChat, &Button))
+		{
+			g_Config.m_ClShowChat = g_Config.m_ClShowChat ? 0 : 1;
+		}
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(g_Config.m_ClShowChat)
+		{
+			static int s_ShowChat = 0;
+			if(DoButton_CheckBox(&s_ShowChat, Localize("Always show chat"), g_Config.m_ClShowChat == 2, &Button))
+				g_Config.m_ClShowChat = g_Config.m_ClShowChat != 2 ? 2 : 1;
+		}
+
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClChatTeamColors, Localize("Show names in chat in team colors"), &g_Config.m_ClChatTeamColors, &LeftView, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowChatFriends, Localize("Show only chat messages from friends"), &g_Config.m_ClShowChatFriends, &LeftView, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClShowChatTeamMembersOnly, Localize("Show only chat messages from team members"), &g_Config.m_ClShowChatTeamMembersOnly, &LeftView, LineSize);
+
+		if(DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClChatOld, Localize("Use old chat style"), &g_Config.m_ClChatOld, &LeftView, LineSize))
 			GameClient()->m_Chat.RebuildChat();
 
-		MainView.HSplitTop(30.0f, 0x0, &MainView);
+		// DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClCensorChat, Localize("Censor profanity"), &g_Config.m_ClCensorChat, &LeftView, LineSize);
 
-		// Message Colors and extra
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(Ui()->DoScrollbarOption(&g_Config.m_ClChatFontSize, &g_Config.m_ClChatFontSize, &Button, Localize("Chat font size"), 10, 100))
+		{
+			Chat.EnsureCoherentWidth();
+			Chat.RebuildChat();
+		}
 
-		MainView.HSplitTop(20.0f, &Section, &MainView);
-		MainView.HSplitTop(10.0f, 0x0, &MainView);
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(Ui()->DoScrollbarOption(&g_Config.m_ClChatWidth, &g_Config.m_ClChatWidth, &Button, Localize("Chat width"), 120, 400))
+		{
+			Chat.EnsureCoherentFontSize();
+			Chat.RebuildChat();
+		}
 
-		UI()->DoLabel(&Section, Localize("Messages"), 20.0f, TEXTALIGN_LEFT);
+		static CButtonContainer s_BackgroundColor;
+		DoLine_ColorPicker(&s_BackgroundColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Chat background color"), &g_Config.m_ClChatBackgroundColor, color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::ClChatBackgroundColor, true)), false, nullptr, true);
 
-		const float LineSize = 25.0f;
-		const float WantedPickerPosition = 210.0f;
-		const float LabelSize = 13.0f;
-		const float LineSpacing = 5.0f;
+		// ***** Messages ***** //
+		Ui()->DoLabel_AutoLineSize(Localize("Messages"), HeadlineFontSize,
+			TEXTALIGN_ML, &RightView, HeadlineHeight);
+		RightView.HSplitTop(MarginSmall, nullptr, &RightView);
 
-		char aBuf[64];
-
-		int i = 0;
-		static int ResetIDs[24];
-
-		DoLine_ColorPicker(&ResetIDs[i++], LineSize, WantedPickerPosition, LabelSize, LineSpacing, &MainView, Localize("System message"), &g_Config.m_ClMessageSystemColor, ColorRGBA(1.0f, 1.0f, 0.5f), true, true, &g_Config.m_ClShowChatSystem);
-		DoLine_ColorPicker(&ResetIDs[i++], LineSize, WantedPickerPosition, LabelSize, LineSpacing, &MainView, Localize("Highlighted message"), &g_Config.m_ClMessageHighlightColor, ColorRGBA(1.0f, 0.5f, 0.5f));
-		DoLine_ColorPicker(&ResetIDs[i++], LineSize, WantedPickerPosition, LabelSize, LineSpacing, &MainView, Localize("Team message"), &g_Config.m_ClMessageTeamColor, ColorRGBA(0.65f, 1.0f, 0.65f));
-		DoLine_ColorPicker(&ResetIDs[i++], LineSize, WantedPickerPosition, LabelSize, LineSpacing, &MainView, Localize("Friend message"), &g_Config.m_ClMessageFriendColor, ColorRGBA(1.0f, 0.137f, 0.137f), true, true, &g_Config.m_ClMessageFriend);
-		DoLine_ColorPicker(&ResetIDs[i++], LineSize, WantedPickerPosition, LabelSize, LineSpacing, &MainView, Localize("Normal message"), &g_Config.m_ClMessageColor, ColorRGBA(1.0f, 1.0f, 1.0f));
+		// Message Colors and extra settings
+		static CButtonContainer s_SystemMessageColor;
+		DoLine_ColorPicker(&s_SystemMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, Localize("System message"), &g_Config.m_ClMessageSystemColor, ColorRGBA(1.0f, 1.0f, 0.5f), true, &g_Config.m_ClShowChatSystem);
+		static CButtonContainer s_HighlightedMessageColor;
+		DoLine_ColorPicker(&s_HighlightedMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, Localize("Highlighted message"), &g_Config.m_ClMessageHighlightColor, ColorRGBA(1.0f, 0.5f, 0.5f));
+		static CButtonContainer s_TeamMessageColor;
+		DoLine_ColorPicker(&s_TeamMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, Localize("Team message"), &g_Config.m_ClMessageTeamColor, ColorRGBA(0.65f, 1.0f, 0.65f));
+		static CButtonContainer s_FriendMessageColor;
+		DoLine_ColorPicker(&s_FriendMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, Localize("Friend message"), &g_Config.m_ClMessageFriendColor, ColorRGBA(1.0f, 0.137f, 0.137f), true, &g_Config.m_ClMessageFriend);
+		static CButtonContainer s_NormalMessageColor;
+		DoLine_ColorPicker(&s_NormalMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, Localize("Normal message"), &g_Config.m_ClMessageColor, ColorRGBA(1.0f, 1.0f, 1.0f));
 
 		str_format(aBuf, sizeof(aBuf), "%s (echo)", Localize("Client message"));
-		DoLine_ColorPicker(&ResetIDs[i++], LineSize, WantedPickerPosition, LabelSize, LineSpacing, &MainView, aBuf, &g_Config.m_ClMessageClientColor, ColorRGBA(0.5f, 0.78f, 1.0f));
+		static CButtonContainer s_ClientMessageColor;
+		DoLine_ColorPicker(&s_ClientMessageColor, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &RightView, aBuf, &g_Config.m_ClMessageClientColor, ColorRGBA(0.5f, 0.78f, 1.0f));
 
 		// ***** Chat Preview ***** //
+		Ui()->DoLabel_AutoLineSize(Localize("Preview"), HeadlineFontSize,
+			TEXTALIGN_ML, &PreviewView, HeadlineHeight);
+		PreviewView.HSplitTop(MarginSmall, nullptr, &PreviewView);
 
-		MainView = Column;
-
-		MainView.HSplitTop(10.0f, 0x0, &MainView);
-		MainView.HSplitTop(20.0f, &Section, &MainView);
-
-		UI()->DoLabel(&Section, Localize("Preview"), 20.0f, TEXTALIGN_LEFT);
-
-		MainView.HSplitTop(10.0f, 0x0, &MainView);
-		RenderTools()->DrawUIRect(&MainView, ColorRGBA(1, 1, 1, 0.1f), CUI::CORNER_ALL, 8.0f);
-		MainView.HSplitTop(10.0f, 0x0, &MainView);
+		// Use the rest of the view for preview
+		PreviewView.Draw(ColorRGBA(1, 1, 1, 0.1f), IGraphics::CORNER_ALL, 5.0f);
+		PreviewView.Margin(MarginSmall, &PreviewView);
 
 		ColorRGBA SystemColor = color_cast<ColorRGBA, ColorHSLA>(ColorHSLA(g_Config.m_ClMessageSystemColor));
 		ColorRGBA HighlightedColor = color_cast<ColorRGBA, ColorHSLA>(ColorHSLA(g_Config.m_ClMessageHighlightColor));
@@ -2694,183 +2004,710 @@ void CMenus::RenderSettingsHUD(CUIRect MainView)
 		ColorRGBA ClientColor = color_cast<ColorRGBA, ColorHSLA>(ColorHSLA(g_Config.m_ClMessageClientColor));
 		ColorRGBA DefaultNameColor(0.8f, 0.8f, 0.8f, 1.0f);
 
-		constexpr float RealFontSize = CChat::FONT_SIZE * 2;
-		const float RealMsgPaddingX = (!g_Config.m_ClChatOld ? CChat::MESSAGE_PADDING_X : 0) * 2;
-		const float RealMsgPaddingY = (!g_Config.m_ClChatOld ? CChat::MESSAGE_PADDING_Y : 0) * 2;
-		const float RealMsgPaddingTee = (!g_Config.m_ClChatOld ? CChat::MESSAGE_TEE_SIZE + CChat::MESSAGE_TEE_PADDING_RIGHT : 0) * 2;
+		const float RealFontSize = Chat.FontSize() * 2;
+		const float RealMsgPaddingX = (!g_Config.m_ClChatOld ? Chat.MessagePaddingX() : 0) * 2;
+		const float RealMsgPaddingY = (!g_Config.m_ClChatOld ? Chat.MessagePaddingY() : 0) * 2;
+		const float RealMsgPaddingTee = (!g_Config.m_ClChatOld ? Chat.MessageTeeSize() + CChat::MESSAGE_TEE_PADDING_RIGHT : 0) * 2;
 		const float RealOffsetY = RealFontSize + RealMsgPaddingY;
 
-		const float X = 5.0f + RealMsgPaddingX / 2.0f + MainView.x;
-		float Y = MainView.y;
+		const float X = RealMsgPaddingX / 2.0f + PreviewView.x;
+		float Y = PreviewView.y;
+		float LineWidth = g_Config.m_ClChatWidth * 2 - (RealMsgPaddingX * 1.5f) - RealMsgPaddingTee;
 
-		CTextCursor Cursor;
-		TextRender()->SetCursor(&Cursor, X, Y, RealFontSize, TEXTFLAG_RENDER);
+		str_copy(aBuf, Client()->PlayerName());
 
-		str_copy(aBuf, Client()->PlayerName(), sizeof(aBuf));
-
-		CAnimState *pIdleState = CAnimState::GetIdle();
-		constexpr int PreviewTeeCount = 4;
-		constexpr float RealTeeSize = CChat::MESSAGE_TEE_SIZE * 2;
-		constexpr float RealTeeSizeHalved = CChat::MESSAGE_TEE_SIZE;
+		const CAnimState *pIdleState = CAnimState::GetIdle();
+		const float RealTeeSize = Chat.MessageTeeSize() * 2;
+		const float RealTeeSizeHalved = Chat.MessageTeeSize();
 		constexpr float TWSkinUnreliableOffset = -0.25f;
-		constexpr float OffsetTeeY = RealTeeSizeHalved;
+		const float OffsetTeeY = RealTeeSizeHalved;
 		const float FullHeightMinusTee = RealOffsetY - RealTeeSize;
 
-		CTeeRenderInfo RenderInfo[PreviewTeeCount];
+		struct SPreviewLine
+		{
+			int m_ClientId;
+			bool m_Team;
+			char m_aName[64];
+			char m_aText[256];
+			bool m_Friend;
+			bool m_Player;
+			bool m_Client;
+			bool m_Highlighted;
+			int m_TimesRepeated;
+
+			CTeeRenderInfo m_RenderInfo;
+		};
+
+		static std::vector<SPreviewLine> s_vLines;
+
+		enum ELineFlag
+		{
+			FLAG_TEAM = 1 << 0,
+			FLAG_FRIEND = 1 << 1,
+			FLAG_HIGHLIGHT = 1 << 2,
+			FLAG_CLIENT = 1 << 3
+		};
+		enum
+		{
+			PREVIEW_SYS,
+			PREVIEW_HIGHLIGHT,
+			PREVIEW_TEAM,
+			PREVIEW_FRIEND,
+			PREVIEW_SPAMMER,
+			PREVIEW_CLIENT
+		};
+		auto &&SetPreviewLine = [](int Index, int ClientId, const char *pName, const char *pText, int Flag, int Repeats) {
+			SPreviewLine *pLine;
+			if((int)s_vLines.size() <= Index)
+			{
+				s_vLines.emplace_back();
+				pLine = &s_vLines.back();
+			}
+			else
+			{
+				pLine = &s_vLines[Index];
+			}
+			pLine->m_ClientId = ClientId;
+			pLine->m_Team = Flag & FLAG_TEAM;
+			pLine->m_Friend = Flag & FLAG_FRIEND;
+			pLine->m_Player = ClientId >= 0;
+			pLine->m_Highlighted = Flag & FLAG_HIGHLIGHT;
+			pLine->m_Client = Flag & FLAG_CLIENT;
+			pLine->m_TimesRepeated = Repeats;
+			str_copy(pLine->m_aName, pName);
+			str_copy(pLine->m_aText, pText);
+		};
+		auto &&SetLineSkin = [RealTeeSize](int Index, const CSkin *pSkin) {
+			if(Index >= (int)s_vLines.size())
+				return;
+			s_vLines[Index].m_RenderInfo.m_Size = RealTeeSize;
+			s_vLines[Index].m_RenderInfo.Apply(pSkin);
+		};
+
+		auto &&RenderPreview = [&](int LineIndex, int x, int y, bool Render = true) {
+			if(LineIndex >= (int)s_vLines.size())
+				return vec2(0, 0);
+			CTextCursor LocalCursor;
+			LocalCursor.SetPosition(vec2(x, y));
+			LocalCursor.m_FontSize = RealFontSize;
+			LocalCursor.m_Flags = Render ? TEXTFLAG_RENDER : 0;
+			LocalCursor.m_LineWidth = LineWidth;
+			const auto &Line = s_vLines[LineIndex];
+
+			char aClientId[16] = "";
+			if(g_Config.m_ClShowIds && Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
+			{
+				GameClient()->FormatClientId(Line.m_ClientId, aClientId, EClientIdFormat::INDENT_FORCE);
+			}
+
+			char aCount[12];
+			if(Line.m_ClientId < 0)
+				str_format(aCount, sizeof(aCount), "[%d] ", Line.m_TimesRepeated + 1);
+			else
+				str_format(aCount, sizeof(aCount), " [%d]", Line.m_TimesRepeated + 1);
+
+			if(Line.m_Player)
+			{
+				LocalCursor.m_X += RealMsgPaddingTee;
+
+				if(Line.m_Friend && g_Config.m_ClMessageFriend)
+				{
+					if(Render)
+						TextRender()->TextColor(FriendColor);
+					TextRender()->TextEx(&LocalCursor, "♥ ", -1);
+				}
+			}
+
+			ColorRGBA NameColor;
+			if(Line.m_Team)
+				NameColor = CalculateNameColor(color_cast<ColorHSLA>(TeamColor));
+			else if(Line.m_Player)
+				NameColor = DefaultNameColor;
+			else if(Line.m_Client)
+				NameColor = ClientColor;
+			else
+				NameColor = SystemColor;
+
+			if(Render)
+				TextRender()->TextColor(NameColor);
+
+			TextRender()->TextEx(&LocalCursor, aClientId);
+			TextRender()->TextEx(&LocalCursor, Line.m_aName);
+
+			if(Line.m_TimesRepeated > 0)
+			{
+				if(Render)
+					TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.3f);
+				TextRender()->TextEx(&LocalCursor, aCount, -1);
+			}
+
+			if(Line.m_ClientId >= 0 && Line.m_aName[0] != '\0')
+			{
+				if(Render)
+					TextRender()->TextColor(NameColor);
+				TextRender()->TextEx(&LocalCursor, ": ", -1);
+			}
+
+			CTextCursor AppendCursor = LocalCursor;
+			AppendCursor.m_LongestLineWidth = 0.0f;
+			if(!g_Config.m_ClChatOld)
+			{
+				AppendCursor.m_StartX = LocalCursor.m_X;
+				AppendCursor.m_LineWidth -= LocalCursor.m_LongestLineWidth;
+			}
+
+			if(Render)
+			{
+				if(Line.m_Highlighted)
+					TextRender()->TextColor(HighlightedColor);
+				else if(Line.m_Team)
+					TextRender()->TextColor(TeamColor);
+				else if(Line.m_Player)
+					TextRender()->TextColor(NormalColor);
+			}
+
+			TextRender()->TextEx(&AppendCursor, Line.m_aText, -1);
+			if(Render)
+				TextRender()->TextColor(TextRender()->DefaultTextColor());
+
+			return vec2{LocalCursor.m_LongestLineWidth + AppendCursor.m_LongestLineWidth, AppendCursor.Height() + RealMsgPaddingY};
+		};
+
+		// Set preview lines
+		{
+			char aLineBuilder[128];
+
+			str_format(aLineBuilder, sizeof(aLineBuilder), "'%s' entered and joined the game", aBuf);
+			SetPreviewLine(PREVIEW_SYS, -1, "*** ", aLineBuilder, 0, 0);
+
+			str_format(aLineBuilder, sizeof(aLineBuilder), "Hey, how are you %s?", aBuf);
+			SetPreviewLine(PREVIEW_HIGHLIGHT, 7, "Random Tee", aLineBuilder, FLAG_HIGHLIGHT, 0);
+
+			SetPreviewLine(PREVIEW_TEAM, 11, "Your Teammate", "Let's speedrun this!", FLAG_TEAM, 0);
+			SetPreviewLine(PREVIEW_FRIEND, 8, "Friend", "Hello there", FLAG_FRIEND, 0);
+			SetPreviewLine(PREVIEW_SPAMMER, 9, "Spammer", "Hey fools, I'm spamming here!", 0, 5);
+			SetPreviewLine(PREVIEW_CLIENT, -1, "— ", "Echo command executed", FLAG_CLIENT, 0);
+		}
+
+		SetLineSkin(1, GameClient()->m_Skins.Find("pinky"));
+		SetLineSkin(2, GameClient()->m_Skins.Find("default"));
+		SetLineSkin(3, GameClient()->m_Skins.Find("cammostripes"));
+		SetLineSkin(4, GameClient()->m_Skins.Find("beast"));
 
 		// Backgrounds first
 		if(!g_Config.m_ClChatOld)
 		{
 			Graphics()->TextureClear();
 			Graphics()->QuadsBegin();
-			Graphics()->SetColor(0, 0, 0, 0.12f);
+			Graphics()->SetColor(color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClChatBackgroundColor, true)));
 
-			char LineBuilder[128];
-			float Width;
 			float TempY = Y;
-			constexpr float RealBackgroundRounding = CChat::MESSAGE_ROUNDING * 2.0f;
+			const float RealBackgroundRounding = Chat.MessageRounding() * 2.0f;
+
+			auto &&RenderMessageBackground = [&](int LineIndex) {
+				auto Size = RenderPreview(LineIndex, 0, 0, false);
+				Graphics()->DrawRectExt(X - RealMsgPaddingX / 2.0f, TempY - RealMsgPaddingY / 2.0f, Size.x + RealMsgPaddingX * 1.5f, Size.y, RealBackgroundRounding, IGraphics::CORNER_ALL);
+				return Size.y;
+			};
 
 			if(g_Config.m_ClShowChatSystem)
 			{
-				str_format(LineBuilder, sizeof(LineBuilder), "*** '%s' entered and joined the game", aBuf);
-				Width = TextRender()->TextWidth(0, RealFontSize, LineBuilder, -1, -1);
-				RenderTools()->DrawRoundRectExt(X - RealMsgPaddingX / 2.0f, TempY - RealMsgPaddingY / 2.0f, Width + RealMsgPaddingX, RealFontSize + RealMsgPaddingY, RealBackgroundRounding, CUI::CORNER_ALL);
-				TempY += RealOffsetY;
+				TempY += RenderMessageBackground(PREVIEW_SYS);
 			}
 
-			str_format(LineBuilder, sizeof(LineBuilder), "%sRandom Tee: Hey, how are you %s?", g_Config.m_ClShowIDs ? " 7: " : "", aBuf);
-			Width = TextRender()->TextWidth(0, RealFontSize, LineBuilder, -1, -1);
-			RenderTools()->DrawRoundRectExt(X - RealMsgPaddingX / 2.0f, TempY - RealMsgPaddingY / 2.0f, Width + RealMsgPaddingX + RealMsgPaddingTee, RealFontSize + RealMsgPaddingY, RealBackgroundRounding, CUI::CORNER_ALL);
-			TempY += RealOffsetY;
+			if(!g_Config.m_ClShowChatFriends)
+			{
+				if(!g_Config.m_ClShowChatTeamMembersOnly)
+					TempY += RenderMessageBackground(PREVIEW_HIGHLIGHT);
+				TempY += RenderMessageBackground(PREVIEW_TEAM);
+			}
 
-			str_format(LineBuilder, sizeof(LineBuilder), "%sYour Teammate: Let's speedrun this!", g_Config.m_ClShowIDs ? "11: " : "");
-			Width = TextRender()->TextWidth(0, RealFontSize, LineBuilder, -1, -1);
-			RenderTools()->DrawRoundRectExt(X - RealMsgPaddingX / 2.0f, TempY - RealMsgPaddingY / 2.0f, Width + RealMsgPaddingX + RealMsgPaddingTee, RealFontSize + RealMsgPaddingY, RealBackgroundRounding, CUI::CORNER_ALL);
-			TempY += RealOffsetY;
+			if(!g_Config.m_ClShowChatTeamMembersOnly)
+				TempY += RenderMessageBackground(PREVIEW_FRIEND);
 
-			str_format(LineBuilder, sizeof(LineBuilder), "%s%sFriend: Hello there", g_Config.m_ClMessageFriend ? "♥ " : "", g_Config.m_ClShowIDs ? " 8: " : "");
-			Width = TextRender()->TextWidth(0, RealFontSize, LineBuilder, -1, -1);
-			RenderTools()->DrawRoundRectExt(X - RealMsgPaddingX / 2.0f, TempY - RealMsgPaddingY / 2.0f, Width + RealMsgPaddingX + RealMsgPaddingTee, RealFontSize + RealMsgPaddingY, RealBackgroundRounding, CUI::CORNER_ALL);
-			TempY += RealOffsetY;
+			if(!g_Config.m_ClShowChatFriends && !g_Config.m_ClShowChatTeamMembersOnly)
+			{
+				TempY += RenderMessageBackground(PREVIEW_SPAMMER);
+			}
 
-			str_format(LineBuilder, sizeof(LineBuilder), "%sSpammer [6]: Hey fools, I'm spamming here!", g_Config.m_ClShowIDs ? " 9: " : "");
-			Width = TextRender()->TextWidth(0, RealFontSize, LineBuilder, -1, -1);
-			RenderTools()->DrawRoundRectExt(X - RealMsgPaddingX / 2.0f, TempY - RealMsgPaddingY / 2.0f, Width + RealMsgPaddingX + RealMsgPaddingTee, RealFontSize + RealMsgPaddingY, RealBackgroundRounding, CUI::CORNER_ALL);
-			TempY += RealOffsetY;
-
-			Width = TextRender()->TextWidth(0, RealFontSize, "*** Echo command executed", -1, -1);
-			RenderTools()->DrawRoundRectExt(X - RealMsgPaddingX / 2.0f, TempY - RealMsgPaddingY / 2.0f, Width + RealMsgPaddingX, RealFontSize + RealMsgPaddingY, RealBackgroundRounding, CUI::CORNER_ALL);
+			TempY += RenderMessageBackground(PREVIEW_CLIENT);
 
 			Graphics()->QuadsEnd();
-
-			// Load skins
-
-			int DefaultInd = GameClient()->m_Skins.Find("default");
-
-			for(auto &Info : RenderInfo)
-			{
-				Info.m_Size = RealTeeSize;
-				Info.m_CustomColoredSkin = false;
-			}
-
-			int ind = -1;
-			int pos = 0;
-
-			RenderInfo[pos++].m_OriginalRenderSkin = GameClient()->m_Skins.Get(DefaultInd)->m_OriginalSkin;
-			RenderInfo[pos++].m_OriginalRenderSkin = (ind = GameClient()->m_Skins.Find("pinky")) != -1 ? GameClient()->m_Skins.Get(ind)->m_OriginalSkin : RenderInfo[0].m_OriginalRenderSkin;
-			RenderInfo[pos++].m_OriginalRenderSkin = (ind = GameClient()->m_Skins.Find("cammostripes")) != -1 ? GameClient()->m_Skins.Get(ind)->m_OriginalSkin : RenderInfo[0].m_OriginalRenderSkin;
-			RenderInfo[pos++].m_OriginalRenderSkin = (ind = GameClient()->m_Skins.Find("beast")) != -1 ? GameClient()->m_Skins.Get(ind)->m_OriginalSkin : RenderInfo[0].m_OriginalRenderSkin;
 		}
 
 		// System
 		if(g_Config.m_ClShowChatSystem)
 		{
-			TextRender()->TextColor(SystemColor);
-			TextRender()->TextEx(&Cursor, "*** '", -1);
-			TextRender()->TextEx(&Cursor, aBuf, -1);
-			TextRender()->TextEx(&Cursor, "' entered and joined the game", -1);
-			TextRender()->SetCursorPosition(&Cursor, X, Y += RealOffsetY);
+			Y += RenderPreview(PREVIEW_SYS, X, Y).y;
 		}
 
-		// Highlighted
-		TextRender()->MoveCursor(&Cursor, RealMsgPaddingTee, 0);
-		TextRender()->TextColor(DefaultNameColor);
-		if(g_Config.m_ClShowIDs)
-			TextRender()->TextEx(&Cursor, " 7: ", -1);
-		TextRender()->TextEx(&Cursor, "Random Tee: ", -1);
-		TextRender()->TextColor(HighlightedColor);
-		TextRender()->TextEx(&Cursor, "Hey, how are you ", -1);
-		TextRender()->TextEx(&Cursor, aBuf, -1);
-		TextRender()->TextEx(&Cursor, "?", -1);
-		if(!g_Config.m_ClChatOld)
-			RenderTools()->RenderTee(pIdleState, &RenderInfo[1], EMOTE_NORMAL, vec2(1, 0.1f), vec2(X + RealTeeSizeHalved, Y + OffsetTeeY + FullHeightMinusTee / 2.0f + TWSkinUnreliableOffset));
-		TextRender()->SetCursorPosition(&Cursor, X, Y += RealOffsetY);
+		if(!g_Config.m_ClShowChatFriends)
+		{
+			// Highlighted
+			if(!g_Config.m_ClChatOld && !g_Config.m_ClShowChatTeamMembersOnly)
+				RenderTools()->RenderTee(pIdleState, &s_vLines[PREVIEW_HIGHLIGHT].m_RenderInfo, EMOTE_NORMAL, vec2(1, 0.1f), vec2(X + RealTeeSizeHalved, Y + OffsetTeeY + FullHeightMinusTee / 2.0f + TWSkinUnreliableOffset));
+			if(!g_Config.m_ClShowChatTeamMembersOnly)
+				Y += RenderPreview(PREVIEW_HIGHLIGHT, X, Y).y;
 
-		// Team
-		TextRender()->MoveCursor(&Cursor, RealMsgPaddingTee, 0);
-		TextRender()->TextColor(TeamColor);
-		if(g_Config.m_ClShowIDs)
-			TextRender()->TextEx(&Cursor, "11: ", -1);
-		TextRender()->TextEx(&Cursor, "Your Teammate: Let's speedrun this!", -1);
-		if(!g_Config.m_ClChatOld)
-			RenderTools()->RenderTee(pIdleState, &RenderInfo[0], EMOTE_NORMAL, vec2(1, 0.1f), vec2(X + RealTeeSizeHalved, Y + OffsetTeeY + FullHeightMinusTee / 2.0f + TWSkinUnreliableOffset));
-		TextRender()->SetCursorPosition(&Cursor, X, Y += RealOffsetY);
+			// Team
+			if(!g_Config.m_ClChatOld)
+				RenderTools()->RenderTee(pIdleState, &s_vLines[PREVIEW_TEAM].m_RenderInfo, EMOTE_NORMAL, vec2(1, 0.1f), vec2(X + RealTeeSizeHalved, Y + OffsetTeeY + FullHeightMinusTee / 2.0f + TWSkinUnreliableOffset));
+			Y += RenderPreview(PREVIEW_TEAM, X, Y).y;
+		}
 
 		// Friend
-		TextRender()->MoveCursor(&Cursor, RealMsgPaddingTee, 0);
-		if(g_Config.m_ClMessageFriend)
-		{
-			TextRender()->TextColor(FriendColor);
-			TextRender()->TextEx(&Cursor, "♥ ", -1);
-		}
-		TextRender()->TextColor(DefaultNameColor);
-		if(g_Config.m_ClShowIDs)
-			TextRender()->TextEx(&Cursor, " 8: ", -1);
-		TextRender()->TextEx(&Cursor, "Friend: ", -1);
-		TextRender()->TextColor(NormalColor);
-		TextRender()->TextEx(&Cursor, "Hello there", -1);
-		if(!g_Config.m_ClChatOld)
-			RenderTools()->RenderTee(pIdleState, &RenderInfo[2], EMOTE_NORMAL, vec2(1, 0.1f), vec2(X + RealTeeSizeHalved, Y + OffsetTeeY + FullHeightMinusTee / 2.0f + TWSkinUnreliableOffset));
-		TextRender()->SetCursorPosition(&Cursor, X, Y += RealOffsetY);
+		if(!g_Config.m_ClChatOld && !g_Config.m_ClShowChatTeamMembersOnly)
+			RenderTools()->RenderTee(pIdleState, &s_vLines[PREVIEW_FRIEND].m_RenderInfo, EMOTE_NORMAL, vec2(1, 0.1f), vec2(X + RealTeeSizeHalved, Y + OffsetTeeY + FullHeightMinusTee / 2.0f + TWSkinUnreliableOffset));
+		if(!g_Config.m_ClShowChatTeamMembersOnly)
+			Y += RenderPreview(PREVIEW_FRIEND, X, Y).y;
 
 		// Normal
-		TextRender()->MoveCursor(&Cursor, RealMsgPaddingTee, 0);
-		TextRender()->TextColor(DefaultNameColor);
-		if(g_Config.m_ClShowIDs)
-			TextRender()->TextEx(&Cursor, " 9: ", -1);
-		TextRender()->TextEx(&Cursor, "Spammer ", -1);
-		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 0.3f);
-		TextRender()->TextEx(&Cursor, "[6]", -1);
-		TextRender()->TextColor(NormalColor);
-		TextRender()->TextEx(&Cursor, ": Hey fools, I'm spamming here!", -1);
-		if(!g_Config.m_ClChatOld)
-			RenderTools()->RenderTee(pIdleState, &RenderInfo[3], EMOTE_NORMAL, vec2(1, 0.1f), vec2(X + RealTeeSizeHalved, Y + OffsetTeeY + FullHeightMinusTee / 2.0f + TWSkinUnreliableOffset));
-		TextRender()->SetCursorPosition(&Cursor, X, Y += RealOffsetY);
-
+		if(!g_Config.m_ClShowChatFriends && !g_Config.m_ClShowChatTeamMembersOnly)
+		{
+			if(!g_Config.m_ClChatOld)
+				RenderTools()->RenderTee(pIdleState, &s_vLines[PREVIEW_SPAMMER].m_RenderInfo, EMOTE_NORMAL, vec2(1, 0.1f), vec2(X + RealTeeSizeHalved, Y + OffsetTeeY + FullHeightMinusTee / 2.0f + TWSkinUnreliableOffset));
+			Y += RenderPreview(PREVIEW_SPAMMER, X, Y).y;
+		}
 		// Client
-		TextRender()->TextColor(ClientColor);
-		TextRender()->TextEx(&Cursor, "*** Echo command executed", -1);
-		TextRender()->SetCursorPosition(&Cursor, X, Y);
+		RenderPreview(PREVIEW_CLIENT, X, Y);
 
 		TextRender()->TextColor(TextRender()->DefaultTextColor());
+	}
+	else if(s_CurTab == APPEARANCE_TAB_NAME_PLATE)
+	{
+		MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+
+		// ***** Name Plate ***** //
+		Ui()->DoLabel_AutoLineSize(Localize("Name Plate"), HeadlineFontSize,
+			TEXTALIGN_ML, &LeftView, HeadlineHeight);
+		LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
+
+		// General name plate settings
+		{
+			int Pressed = (g_Config.m_ClNamePlates ? 2 : 0) + (g_Config.m_ClNamePlatesOwn ? 1 : 0);
+			if(DoLine_RadioMenu(LeftView, Localize("Show name plates"),
+				   m_vButtonContainersNamePlateShow,
+				   {Localize("None", "Show name plates"), Localize("Own", "Show name plates"), Localize("Others", "Show name plates"), Localize("All", "Show name plates")},
+				   {0, 1, 2, 3},
+				   Pressed))
+			{
+				g_Config.m_ClNamePlates = Pressed & 2 ? 1 : 0;
+				g_Config.m_ClNamePlatesOwn = Pressed & 1 ? 1 : 0;
+			}
+		}
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		Ui()->DoScrollbarOption(&g_Config.m_ClNamePlatesSize, &g_Config.m_ClNamePlatesSize, &Button, Localize("Name plates size"), -50, 100);
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		Ui()->DoScrollbarOption(&g_Config.m_ClNamePlatesOffset, &g_Config.m_ClNamePlatesOffset, &Button, Localize("Name plates offset"), 10, 50);
+
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClNamePlatesClan, Localize("Show clan above name plates"), &g_Config.m_ClNamePlatesClan, &LeftView, LineSize);
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(g_Config.m_ClNamePlatesClan)
+			Ui()->DoScrollbarOption(&g_Config.m_ClNamePlatesClanSize, &g_Config.m_ClNamePlatesClanSize, &Button, Localize("Clan plates size"), -50, 100);
+
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClNamePlatesTeamcolors, Localize("Use team colors for name plates"), &g_Config.m_ClNamePlatesTeamcolors, &LeftView, LineSize);
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClNamePlatesFriendMark, Localize("Show friend icon in name plates"), &g_Config.m_ClNamePlatesFriendMark, &LeftView, LineSize);
+
+		DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClNamePlatesIds, Localize("Show client IDs in name plates"), &g_Config.m_ClNamePlatesIds, &LeftView, LineSize);
+		if(g_Config.m_ClNamePlatesIds > 0)
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_ClNamePlatesIdsSeparateLine, Localize("Show client IDs on a separate line"), &g_Config.m_ClNamePlatesIdsSeparateLine, &LeftView, LineSize);
+		else
+			LeftView.HSplitTop(LineSize, nullptr, &LeftView);
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(g_Config.m_ClNamePlatesIds > 0 && g_Config.m_ClNamePlatesIdsSeparateLine > 0)
+			Ui()->DoScrollbarOption(&g_Config.m_ClNamePlatesIdsSize, &g_Config.m_ClNamePlatesIdsSize, &Button, Localize("Client IDs size"), -50, 100);
+
+		// ***** Hook Strength ***** //
+		LeftView.HSplitTop(MarginBetweenViews, nullptr, &LeftView);
+		Ui()->DoLabel_AutoLineSize(Localize("Hook Strength"), HeadlineFontSize,
+			TEXTALIGN_ML, &LeftView, HeadlineHeight);
+		LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
+
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(DoButton_CheckBox(&g_Config.m_ClNamePlatesStrong, Localize("Show hook strength icon indicator"), g_Config.m_ClNamePlatesStrong, &Button))
+		{
+			g_Config.m_ClNamePlatesStrong = g_Config.m_ClNamePlatesStrong ? 0 : 1;
+		}
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(g_Config.m_ClNamePlatesStrong)
+		{
+			static int s_NamePlatesStrong = 0;
+			if(DoButton_CheckBox(&s_NamePlatesStrong, Localize("Show hook strength number indicator"), g_Config.m_ClNamePlatesStrong == 2, &Button))
+				g_Config.m_ClNamePlatesStrong = g_Config.m_ClNamePlatesStrong != 2 ? 2 : 1;
+		}
+
+		LeftView.HSplitTop(LineSize * 2.0f, &Button, &LeftView);
+		if(g_Config.m_ClNamePlatesStrong)
+		{
+			Ui()->DoScrollbarOption(&g_Config.m_ClNamePlatesStrongSize, &g_Config.m_ClNamePlatesStrongSize, &Button, Localize("Size of hook strength icon and number indicator"), -50, 100, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_MULTILINE);
+		}
+
+		// ***** Key Presses ***** //
+		LeftView.HSplitTop(MarginBetweenViews, nullptr, &LeftView);
+		Ui()->DoLabel_AutoLineSize(Localize("Key Presses"), HeadlineFontSize,
+			TEXTALIGN_ML, &LeftView, HeadlineHeight);
+		LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
+
+		DoLine_RadioMenu(LeftView, Localize("Show players' key presses"),
+			m_vButtonContainersNamePlateKeyPresses,
+			{Localize("None", "Show players' key presses"), Localize("Own", "Show players' key presses"), Localize("Others", "Show players' key presses"), Localize("All", "Show players' key presses")},
+			{0, 3, 1, 2},
+			g_Config.m_ClShowDirection);
+
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(g_Config.m_ClShowDirection > 0)
+			Ui()->DoScrollbarOption(&g_Config.m_ClDirectionSize, &g_Config.m_ClDirectionSize, &Button, Localize("Size of key press icons"), -50, 100);
+
+		// ***** Name Plate Preview ***** //
+		Ui()->DoLabel_AutoLineSize(Localize("Preview"), HeadlineFontSize,
+			TEXTALIGN_ML, &RightView, HeadlineHeight);
+		RightView.HSplitTop(2.0f * MarginSmall, nullptr, &RightView);
+
+		// ***** Name Plate Dummy Preview ***** //
+		RightView.HSplitBottom(LineSize, &RightView, &Button);
+		if(DoButton_CheckBox(&m_DummyNamePlatePreview, g_Config.m_ClDummy ? Localize("Preview player's name plate") : Localize("Preview dummy's name plate"), m_DummyNamePlatePreview, &Button))
+			m_DummyNamePlatePreview = !m_DummyNamePlatePreview;
+
+		int Dummy = g_Config.m_ClDummy != (m_DummyNamePlatePreview ? 1 : 0);
+
+		const vec2 Position = RightView.Center();
+
+		GameClient()->m_NamePlates.RenderNamePlatePreview(Position, Dummy);
+	}
+	else if(s_CurTab == APPEARANCE_TAB_HOOK_COLLISION)
+	{
+		MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+
+		// ***** Hookline ***** //
+		Ui()->DoLabel_AutoLineSize(Localize("Hook collision line"), HeadlineFontSize,
+			TEXTALIGN_ML, &LeftView, HeadlineHeight);
+		LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
+
+		// General hookline settings
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(DoButton_CheckBox(&g_Config.m_ClShowHookCollOwn, Localize("Show own player's hook collision line"), g_Config.m_ClShowHookCollOwn, &Button))
+		{
+			g_Config.m_ClShowHookCollOwn = g_Config.m_ClShowHookCollOwn ? 0 : 1;
+		}
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(g_Config.m_ClShowHookCollOwn)
+		{
+			static int s_ShowHookCollOwn = 0;
+			if(DoButton_CheckBox(&s_ShowHookCollOwn, Localize("Always show own player's hook collision line"), g_Config.m_ClShowHookCollOwn == 2, &Button))
+				g_Config.m_ClShowHookCollOwn = g_Config.m_ClShowHookCollOwn != 2 ? 2 : 1;
+		}
+
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(DoButton_CheckBox(&g_Config.m_ClShowHookCollOther, Localize("Show other players' hook collision lines"), g_Config.m_ClShowHookCollOther, &Button))
+		{
+			g_Config.m_ClShowHookCollOther = g_Config.m_ClShowHookCollOther >= 1 ? 0 : 1;
+		}
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(g_Config.m_ClShowHookCollOther)
+		{
+			static int s_ShowHookCollOther = 0;
+			if(DoButton_CheckBox(&s_ShowHookCollOther, Localize("Always show other players' hook collision lines"), g_Config.m_ClShowHookCollOther == 2, &Button))
+				g_Config.m_ClShowHookCollOther = g_Config.m_ClShowHookCollOther != 2 ? 2 : 1;
+		}
+
+		LeftView.HSplitTop(LineSize * 2.0f, &Button, &LeftView);
+		Ui()->DoScrollbarOption(&g_Config.m_ClHookCollSize, &g_Config.m_ClHookCollSize, &Button, Localize("Width of your own hook collision line"), 0, 20, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_MULTILINE);
+
+		LeftView.HSplitTop(LineSize * 2.0f, &Button, &LeftView);
+		Ui()->DoScrollbarOption(&g_Config.m_ClHookCollSizeOther, &g_Config.m_ClHookCollSizeOther, &Button, Localize("Width of others' hook collision line"), 0, 20, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_MULTILINE);
+
+		LeftView.HSplitTop(LineSize * 2.0f, &Button, &LeftView);
+		Ui()->DoScrollbarOption(&g_Config.m_ClHookCollAlpha, &g_Config.m_ClHookCollAlpha, &Button, Localize("Hook collision line opacity"), 0, 100, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_MULTILINE, "%");
+
+		static CButtonContainer s_HookCollNoCollResetId, s_HookCollHookableCollResetId, s_HookCollTeeCollResetId, s_HookCollTipColorResetId;
+		static int s_HookCollToolTip;
+
+		Ui()->DoLabel_AutoLineSize(Localize("Colors of the hook collision line:"), 13.0f,
+			TEXTALIGN_ML, &LeftView, HeadlineHeight);
+
+		Ui()->DoButtonLogic(&s_HookCollToolTip, 0, &LeftView, BUTTONFLAG_NONE); // Just for the tooltip, result ignored
+		GameClient()->m_Tooltips.DoToolTip(&s_HookCollToolTip, &LeftView, Localize("Your movements are not taken into account when calculating the line colors"));
+		DoLine_ColorPicker(&s_HookCollNoCollResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("When nothing is hookable", "Hook collision line color"), &g_Config.m_ClHookCollColorNoColl, ColorRGBA(1.0f, 0.0f, 0.0f, 1.0f), false);
+		DoLine_ColorPicker(&s_HookCollHookableCollResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("When something is hookable", "Hook collision line color"), &g_Config.m_ClHookCollColorHookableColl, ColorRGBA(130.0f / 255.0f, 232.0f / 255.0f, 160.0f / 255.0f, 1.0f), false);
+		DoLine_ColorPicker(&s_HookCollTeeCollResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("When a Tee is hookable", "Hook collision line color"), &g_Config.m_ClHookCollColorTeeColl, ColorRGBA(1.0f, 1.0f, 0.0f, 1.0f), false);
+		DoLine_ColorPicker(&s_HookCollTipColorResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Hook collision line tip", "Hook collision line color"), &g_Config.m_ClHookCollTipColor, ColorRGBA(1.0f, 1.0f, 0.0f, 0.5f), false, nullptr, true);
+
+		// ***** Hook collisions preview ***** //
+		Ui()->DoLabel_AutoLineSize(Localize("Preview"), HeadlineFontSize,
+			TEXTALIGN_ML, &RightView, HeadlineHeight);
+		RightView.HSplitTop(2 * MarginSmall, nullptr, &RightView);
+
+		auto DoHookCollision = [this](const vec2 &Pos, const float &Length, const int &Size, const ColorRGBA &Color, const ColorRGBA &TipColor, const bool &Invert) {
+			ColorRGBA ColorModified = Color;
+			ColorRGBA TipColorModified = TipColor;
+			if(Invert)
+				ColorModified = color_invert(ColorModified);
+			ColorModified = ColorModified.WithAlpha((float)g_Config.m_ClHookCollAlpha / 100);
+			TipColorModified = TipColor.WithMultipliedAlpha((float)g_Config.m_ClHookCollAlpha / 100);
+			Graphics()->TextureClear();
+			if(Size > 0)
+			{
+				Graphics()->QuadsBegin();
+				Graphics()->SetColor(ColorModified);
+				float LineWidth = 0.5f + (float)(Size - 1) * 0.25f;
+				IGraphics::CQuadItem QuadItem(Pos.x, Pos.y - LineWidth, Length, LineWidth * 2.f);
+				Graphics()->QuadsDrawTL(&QuadItem, 1);
+				if(TipColor.a > 0.0f)
+				{
+					Graphics()->SetColor(TipColorModified);
+					IGraphics::CQuadItem TipQuadItem(Pos.x + Length, Pos.y - LineWidth, 15.f, LineWidth * 2.f);
+					Graphics()->QuadsDrawTL(&TipQuadItem, 1);
+				}
+				Graphics()->QuadsEnd();
+			}
+			else
+			{
+				Graphics()->LinesBegin();
+				Graphics()->SetColor(ColorModified);
+				IGraphics::CLineItem LineItem(Pos.x, Pos.y, Pos.x + Length, Pos.y);
+				Graphics()->LinesDraw(&LineItem, 1);
+				if(TipColor.a > 0.0f)
+				{
+					Graphics()->SetColor(TipColorModified);
+					IGraphics::CLineItem TipLineItem(Pos.x + Length, Pos.y, Pos.x + Length + 15.f, Pos.y);
+					Graphics()->LinesDraw(&TipLineItem, 1);
+				}
+				Graphics()->LinesEnd();
+			}
+		};
+
+		CTeeRenderInfo OwnSkinInfo;
+		OwnSkinInfo.Apply(GameClient()->m_Skins.Find(g_Config.m_ClPlayerSkin));
+		OwnSkinInfo.ApplyColors(g_Config.m_ClPlayerUseCustomColor, g_Config.m_ClPlayerColorBody, g_Config.m_ClPlayerColorFeet);
+		OwnSkinInfo.m_Size = 50.0f;
+
+		CTeeRenderInfo DummySkinInfo;
+		DummySkinInfo.Apply(GameClient()->m_Skins.Find(g_Config.m_ClDummySkin));
+		DummySkinInfo.ApplyColors(g_Config.m_ClDummyUseCustomColor, g_Config.m_ClDummyColorBody, g_Config.m_ClDummyColorFeet);
+		DummySkinInfo.m_Size = 50.0f;
+
+		vec2 TeeRenderPos, DummyRenderPos;
+
+		const float LineLength = 150.f;
+		const float LeftMargin = 30.f;
+
+		const int TileScale = 32.0f;
+
+		// Toggled via checkbox later, inverts some previews
+		static bool s_HookCollPressed = false;
+
+		CUIRect PreviewColl;
+
+		// ***** Unhookable Tile Preview *****
+		CUIRect PreviewNoColl;
+		RightView.HSplitTop(50.0f, &PreviewNoColl, &RightView);
+		RightView.HSplitTop(4 * MarginSmall, nullptr, &RightView);
+		TeeRenderPos = vec2(PreviewNoColl.x + LeftMargin, PreviewNoColl.y + PreviewNoColl.h / 2.0f);
+		DoHookCollision(TeeRenderPos, PreviewNoColl.w - LineLength, g_Config.m_ClHookCollSize, color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClHookCollColorNoColl)), ColorRGBA(0.0f, 0.0f, 0.0f, 0.0f), s_HookCollPressed);
+		RenderTools()->RenderTee(CAnimState::GetIdle(), &OwnSkinInfo, 0, vec2(1.0f, 0.0f), TeeRenderPos);
+
+		CUIRect NoHookTileRect;
+		PreviewNoColl.VSplitRight(LineLength, &PreviewNoColl, &NoHookTileRect);
+		NoHookTileRect.VSplitLeft(50.0f, &NoHookTileRect, nullptr);
+		NoHookTileRect.Margin(10.0f, &NoHookTileRect);
+
+		// Render unhookable tile
+		Graphics()->TextureClear();
+		Graphics()->TextureSet(GameClient()->m_MapImages.GetEntities(MAP_IMAGE_ENTITY_LAYER_TYPE_ALL_EXCEPT_SWITCH));
+		Graphics()->BlendNormal();
+		Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+		RenderMap()->RenderTile(NoHookTileRect.x, NoHookTileRect.y, TILE_NOHOOK, TileScale, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f));
+
+		// ***** Hookable Tile Preview *****
+		RightView.HSplitTop(50.0f, &PreviewColl, &RightView);
+		RightView.HSplitTop(4 * MarginSmall, nullptr, &RightView);
+		TeeRenderPos = vec2(PreviewColl.x + LeftMargin, PreviewColl.y + PreviewColl.h / 2.0f);
+		DoHookCollision(TeeRenderPos, PreviewColl.w - LineLength, g_Config.m_ClHookCollSize, color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClHookCollColorHookableColl)), ColorRGBA(0.0f, 0.0f, 0.0f, 0.0f), s_HookCollPressed);
+		RenderTools()->RenderTee(CAnimState::GetIdle(), &OwnSkinInfo, 0, vec2(1.0f, 0.0f), TeeRenderPos);
+
+		CUIRect HookTileRect;
+		PreviewColl.VSplitRight(LineLength, &PreviewColl, &HookTileRect);
+		HookTileRect.VSplitLeft(50.0f, &HookTileRect, nullptr);
+		HookTileRect.Margin(10.0f, &HookTileRect);
+
+		// Render hookable tile
+		Graphics()->TextureClear();
+		Graphics()->TextureSet(GameClient()->m_MapImages.GetEntities(MAP_IMAGE_ENTITY_LAYER_TYPE_ALL_EXCEPT_SWITCH));
+		Graphics()->BlendNormal();
+		Graphics()->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+		RenderMap()->RenderTile(HookTileRect.x, HookTileRect.y, TILE_SOLID, TileScale, ColorRGBA(1.0f, 1.0f, 1.0f, 1.0f));
+
+		// ***** Hook Dummy Preview *****
+		RightView.HSplitTop(50.0f, &PreviewColl, &RightView);
+		RightView.HSplitTop(4 * MarginSmall, nullptr, &RightView);
+		TeeRenderPos = vec2(PreviewColl.x + LeftMargin, PreviewColl.y + PreviewColl.h / 2.0f);
+		DummyRenderPos = vec2(PreviewColl.x + PreviewColl.w - LineLength - 5.f + LeftMargin, PreviewColl.y + PreviewColl.h / 2.0f);
+		DoHookCollision(TeeRenderPos, PreviewColl.w - LineLength - 15.f, g_Config.m_ClHookCollSize, color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClHookCollColorTeeColl)), ColorRGBA(0.0f, 0.0f, 0.0f, 0.0f), s_HookCollPressed);
+		RenderTools()->RenderTee(CAnimState::GetIdle(), &DummySkinInfo, 0, vec2(1.0f, 0.0f), DummyRenderPos);
+		RenderTools()->RenderTee(CAnimState::GetIdle(), &OwnSkinInfo, 0, vec2(1.0f, 0.0f), TeeRenderPos);
+
+		// ***** Hook Dummy Reverse Preview *****
+		RightView.HSplitTop(50.0f, &PreviewColl, &RightView);
+		RightView.HSplitTop(4 * MarginSmall, nullptr, &RightView);
+		TeeRenderPos = vec2(PreviewColl.x + LeftMargin, PreviewColl.y + PreviewColl.h / 2.0f);
+		DummyRenderPos = vec2(PreviewColl.x + PreviewColl.w - LineLength - 5.f + LeftMargin, PreviewColl.y + PreviewColl.h / 2.0f);
+		DoHookCollision(TeeRenderPos, PreviewColl.w - LineLength - 15.f, g_Config.m_ClHookCollSizeOther, color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClHookCollColorTeeColl)), ColorRGBA(0.0f, 0.0f, 0.0f, 0.0f), false);
+		RenderTools()->RenderTee(CAnimState::GetIdle(), &OwnSkinInfo, 0, vec2(1.0f, 0.0f), DummyRenderPos);
+		RenderTools()->RenderTee(CAnimState::GetIdle(), &DummySkinInfo, 0, vec2(1.0f, 0.0f), TeeRenderPos);
+
+		// ***** Hook Line Tip Preview *****
+		RightView.HSplitTop(50.0f, &PreviewColl, &RightView);
+		RightView.HSplitTop(4 * MarginSmall, nullptr, &RightView);
+		TeeRenderPos = vec2(PreviewColl.x + LeftMargin, PreviewColl.y + PreviewColl.h / 2.0f);
+		DoHookCollision(TeeRenderPos, PreviewColl.w - LineLength - 15.f, g_Config.m_ClHookCollSize, color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClHookCollColorNoColl)), color_cast<ColorRGBA>(ColorHSLA(g_Config.m_ClHookCollTipColor, true)), s_HookCollPressed);
+		RenderTools()->RenderTee(CAnimState::GetIdle(), &OwnSkinInfo, 0, vec2(1.0f, 0.0f), TeeRenderPos);
+
+		// ***** Preview +hookcoll pressed toggle *****
+		RightView.HSplitTop(LineSize, &Button, &RightView);
+		if(DoButton_CheckBox(&s_HookCollPressed, Localize("Preview 'Hook collisions' being pressed"), s_HookCollPressed, &Button))
+			s_HookCollPressed = !s_HookCollPressed;
+	}
+	else if(s_CurTab == APPEARANCE_TAB_INFO_MESSAGES)
+	{
+		MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+
+		// ***** Info Messages ***** //
+		Ui()->DoLabel_AutoLineSize(Localize("Info Messages"), HeadlineFontSize,
+			TEXTALIGN_ML, &LeftView, HeadlineHeight);
+		LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
+
+		// General info messages settings
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(DoButton_CheckBox(&g_Config.m_ClShowKillMessages, Localize("Show kill messages"), g_Config.m_ClShowKillMessages, &Button))
+		{
+			g_Config.m_ClShowKillMessages ^= 1;
+		}
+
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(DoButton_CheckBox(&g_Config.m_ClShowFinishMessages, Localize("Show finish messages"), g_Config.m_ClShowFinishMessages, &Button))
+		{
+			g_Config.m_ClShowFinishMessages ^= 1;
+		}
+
+		static CButtonContainer s_KillMessageNormalColorId, s_KillMessageHighlightColorId;
+		DoLine_ColorPicker(&s_KillMessageNormalColorId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Normal Color"), &g_Config.m_ClKillMessageNormalColor, ColorRGBA(1.0f, 1.0f, 1.0f), false);
+		DoLine_ColorPicker(&s_KillMessageHighlightColorId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Highlight Color"), &g_Config.m_ClKillMessageHighlightColor, ColorRGBA(1.0f, 1.0f, 1.0f), false);
+	}
+	else if(s_CurTab == APPEARANCE_TAB_LASER)
+	{
+		MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+
+		// ***** Weapons ***** //
+		Ui()->DoLabel_AutoLineSize(Localize("Weapons"), HeadlineFontSize,
+			TEXTALIGN_ML, &LeftView, HeadlineHeight);
+		LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
+
+		// General weapon laser settings
+		static CButtonContainer s_LaserRifleOutResetId, s_LaserRifleInResetId, s_LaserShotgunOutResetId, s_LaserShotgunInResetId;
+
+		ColorHSLA LaserRifleOutlineColor = DoLine_ColorPicker(&s_LaserRifleOutResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Rifle Laser Outline Color"), &g_Config.m_ClLaserRifleOutlineColor, ColorRGBA(0.074402f, 0.074402f, 0.247166f, 1.0f), false);
+		ColorHSLA LaserRifleInnerColor = DoLine_ColorPicker(&s_LaserRifleInResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Rifle Laser Inner Color"), &g_Config.m_ClLaserRifleInnerColor, ColorRGBA(0.498039f, 0.498039f, 1.0f, 1.0f), false);
+		ColorHSLA LaserShotgunOutlineColor = DoLine_ColorPicker(&s_LaserShotgunOutResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Shotgun Laser Outline Color"), &g_Config.m_ClLaserShotgunOutlineColor, ColorRGBA(0.125490f, 0.098039f, 0.043137f, 1.0f), false);
+		ColorHSLA LaserShotgunInnerColor = DoLine_ColorPicker(&s_LaserShotgunInResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Shotgun Laser Inner Color"), &g_Config.m_ClLaserShotgunInnerColor, ColorRGBA(0.570588f, 0.417647f, 0.252941f, 1.0f), false);
+
+		// ***** Entities ***** //
+		LeftView.HSplitTop(10.0f, nullptr, &LeftView);
+		Ui()->DoLabel_AutoLineSize(Localize("Entities"), HeadlineFontSize,
+			TEXTALIGN_ML, &LeftView, HeadlineHeight);
+		LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
+
+		// General entity laser settings
+		static CButtonContainer s_LaserDoorOutResetId, s_LaserDoorInResetId, s_LaserFreezeOutResetId, s_LaserFreezeInResetId, s_LaserDraggerOutResetId, s_LaserDraggerInResetId;
+
+		ColorHSLA LaserDoorOutlineColor = DoLine_ColorPicker(&s_LaserDoorOutResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Door Laser Outline Color"), &g_Config.m_ClLaserDoorOutlineColor, ColorRGBA(0.0f, 0.131372f, 0.096078f, 1.0f), false);
+		ColorHSLA LaserDoorInnerColor = DoLine_ColorPicker(&s_LaserDoorInResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Door Laser Inner Color"), &g_Config.m_ClLaserDoorInnerColor, ColorRGBA(0.262745f, 0.760784f, 0.639215f, 1.0f), false);
+		ColorHSLA LaserFreezeOutlineColor = DoLine_ColorPicker(&s_LaserFreezeOutResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Freeze Laser Outline Color"), &g_Config.m_ClLaserFreezeOutlineColor, ColorRGBA(0.131372f, 0.123529f, 0.182352f, 1.0f), false);
+		ColorHSLA LaserFreezeInnerColor = DoLine_ColorPicker(&s_LaserFreezeInResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Freeze Laser Inner Color"), &g_Config.m_ClLaserFreezeInnerColor, ColorRGBA(0.482352f, 0.443137f, 0.564705f, 1.0f), false);
+		ColorHSLA LaserDraggerOutlineColor = DoLine_ColorPicker(&s_LaserDraggerOutResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Dragger Outline Color"), &g_Config.m_ClLaserDraggerOutlineColor, ColorRGBA(0.1640625f, 0.015625f, 0.015625f, 1.0f), false);
+		ColorHSLA LaserDraggerInnerColor = DoLine_ColorPicker(&s_LaserDraggerInResetId, ColorPickerLineSize, ColorPickerLabelSize, ColorPickerLineSpacing, &LeftView, Localize("Dragger Inner Color"), &g_Config.m_ClLaserDraggerInnerColor, ColorRGBA(.8666666f, .3725490f, .3725490f, 1.0f), false);
+
+		static CButtonContainer s_AllToRifleResetId, s_AllToDefaultResetId;
+
+		LeftView.HSplitTop(4 * MarginSmall, nullptr, &LeftView);
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(DoButton_Menu(&s_AllToRifleResetId, Localize("Set all to Rifle"), 0, &Button))
+		{
+			g_Config.m_ClLaserShotgunOutlineColor = g_Config.m_ClLaserRifleOutlineColor;
+			g_Config.m_ClLaserShotgunInnerColor = g_Config.m_ClLaserRifleInnerColor;
+			g_Config.m_ClLaserDoorOutlineColor = g_Config.m_ClLaserRifleOutlineColor;
+			g_Config.m_ClLaserDoorInnerColor = g_Config.m_ClLaserRifleInnerColor;
+			g_Config.m_ClLaserFreezeOutlineColor = g_Config.m_ClLaserRifleOutlineColor;
+			g_Config.m_ClLaserFreezeInnerColor = g_Config.m_ClLaserRifleInnerColor;
+			g_Config.m_ClLaserDraggerOutlineColor = g_Config.m_ClLaserRifleOutlineColor;
+			g_Config.m_ClLaserDraggerInnerColor = g_Config.m_ClLaserRifleInnerColor;
+		}
+
+		// values taken from the CL commands
+		LeftView.HSplitTop(2 * MarginSmall, nullptr, &LeftView);
+		LeftView.HSplitTop(LineSize, &Button, &LeftView);
+		if(DoButton_Menu(&s_AllToDefaultResetId, Localize("Reset to defaults"), 0, &Button))
+		{
+			g_Config.m_ClLaserRifleOutlineColor = 11176233;
+			g_Config.m_ClLaserRifleInnerColor = 11206591;
+			g_Config.m_ClLaserShotgunOutlineColor = 1866773;
+			g_Config.m_ClLaserShotgunInnerColor = 1467241;
+			g_Config.m_ClLaserDoorOutlineColor = 7667473;
+			g_Config.m_ClLaserDoorInnerColor = 7701379;
+			g_Config.m_ClLaserFreezeOutlineColor = 11613223;
+			g_Config.m_ClLaserFreezeInnerColor = 12001153;
+			g_Config.m_ClLaserDraggerOutlineColor = 57618;
+			g_Config.m_ClLaserDraggerInnerColor = 42398;
+		}
+
+		// ***** Laser Preview ***** //
+		Ui()->DoLabel_AutoLineSize(Localize("Preview"), HeadlineFontSize,
+			TEXTALIGN_ML, &RightView, HeadlineHeight);
+		RightView.HSplitTop(MarginSmall, nullptr, &RightView);
+
+		const float LaserPreviewHeight = 60.0f;
+		CUIRect LaserPreview;
+		RightView.HSplitTop(LaserPreviewHeight, &LaserPreview, &RightView);
+		RightView.HSplitTop(2 * MarginSmall, nullptr, &RightView);
+		DoLaserPreview(&LaserPreview, LaserRifleOutlineColor, LaserRifleInnerColor, LASERTYPE_RIFLE);
+
+		RightView.HSplitTop(LaserPreviewHeight, &LaserPreview, &RightView);
+		RightView.HSplitTop(2 * MarginSmall, nullptr, &RightView);
+		DoLaserPreview(&LaserPreview, LaserShotgunOutlineColor, LaserShotgunInnerColor, LASERTYPE_SHOTGUN);
+
+		RightView.HSplitTop(LaserPreviewHeight, &LaserPreview, &RightView);
+		RightView.HSplitTop(2 * MarginSmall, nullptr, &RightView);
+		DoLaserPreview(&LaserPreview, LaserDoorOutlineColor, LaserDoorInnerColor, LASERTYPE_DOOR);
+
+		RightView.HSplitTop(LaserPreviewHeight, &LaserPreview, &RightView);
+		RightView.HSplitTop(2 * MarginSmall, nullptr, &RightView);
+		DoLaserPreview(&LaserPreview, LaserFreezeOutlineColor, LaserFreezeInnerColor, LASERTYPE_FREEZE);
+
+		RightView.HSplitTop(LaserPreviewHeight, &LaserPreview, &RightView);
+		RightView.HSplitTop(2 * MarginSmall, nullptr, &RightView);
+		DoLaserPreview(&LaserPreview, LaserDraggerOutlineColor, LaserDraggerInnerColor, LASERTYPE_DRAGGER);
 	}
 }
 
 void CMenus::RenderSettingsDDNet(CUIRect MainView)
 {
-	CUIRect Button, Left, Right, LeftLeft, Demo, Gameplay, Miscellaneous, Label, Background;
+	CUIRect Button, Left, Right, LeftLeft, Label;
 
-	bool CheckSettings = false;
-	static int s_InpMouseOld = g_Config.m_InpMouseOld;
+#if defined(CONF_AUTOUPDATE)
+	CUIRect UpdaterRect;
+	MainView.HSplitBottom(20.0f, &MainView, &UpdaterRect);
+	MainView.HSplitBottom(5.0f, &MainView, nullptr);
+#endif
 
-	MainView.HSplitTop(100.0f, &Demo, &MainView);
-
+	// demo
+	CUIRect Demo;
+	MainView.HSplitTop(110.0f, &Demo, &MainView);
 	Demo.HSplitTop(30.0f, &Label, &Demo);
-	UI()->DoLabel(&Label, Localize("Demo"), 20.0f, TEXTALIGN_LEFT);
-	Demo.Margin(5.0f, &Demo);
-	Demo.VSplitMid(&Left, &Right);
-	Left.VSplitRight(5.0f, &Left, 0);
-	Right.VMargin(5.0f, &Right);
+	Ui()->DoLabel(&Label, Localize("Demo"), 20.0f, TEXTALIGN_ML);
+	Label.VSplitMid(nullptr, &Label, 20.0f);
+	Ui()->DoLabel(&Label, Localize("Ghost"), 20.0f, TEXTALIGN_ML);
+
+	Demo.HSplitTop(5.0f, nullptr, &Demo);
+	Demo.VSplitMid(&Left, &Right, 20.0f);
 
 	Left.HSplitTop(20.0f, &Button, &Left);
 	if(DoButton_CheckBox(&g_Config.m_ClAutoRaceRecord, Localize("Save the best demo of each race"), g_Config.m_ClAutoRaceRecord, &Button))
@@ -2878,37 +2715,22 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 		g_Config.m_ClAutoRaceRecord ^= 1;
 	}
 
+	Left.HSplitTop(20.0f, &Button, &Left);
+	if(DoButton_CheckBox(&g_Config.m_ClReplays, Localize("Enable replays"), g_Config.m_ClReplays, &Button))
 	{
-		Left.HSplitTop(20.0f, &Button, &Left);
-
-		if(DoButton_CheckBox(&g_Config.m_ClReplays, Localize("Enable replays"), g_Config.m_ClReplays, &Button))
+		g_Config.m_ClReplays ^= 1;
+		if(Client()->State() == IClient::STATE_ONLINE)
 		{
-			g_Config.m_ClReplays ^= 1;
-			if(!g_Config.m_ClReplays)
-			{
-				// stop recording and remove the tmp demo file
-				Client()->DemoRecorder_Stop(RECORDER_REPLAYS, true);
-			}
-			else
-			{
-				// start recording
-				Client()->DemoRecorder_HandleAutoStart();
-			}
+			Client()->DemoRecorder_UpdateReplayRecorder();
 		}
-
-		Left.HSplitTop(20.0f, &Button, &Left);
-		Button.VSplitLeft(140.0f, &Label, &Button);
-		char aBuf[256];
-		str_format(aBuf, sizeof(aBuf), Localize("Default length: %d"), g_Config.m_ClReplayLength);
-		UI()->DoLabel(&Label, aBuf, 14.0f, TEXTALIGN_LEFT);
-
-		int NewValue = (int)(UIEx()->DoScrollbarH(&g_Config.m_ClReplayLength, &Button, (minimum(g_Config.m_ClReplayLength, 600) - 10) / 590.0f) * 590.0f) + 10;
-		if(g_Config.m_ClReplayLength < 600 || NewValue < 600)
-			g_Config.m_ClReplayLength = minimum(NewValue, 600);
 	}
 
+	Left.HSplitTop(20.0f, &Button, &Left);
+	if(g_Config.m_ClReplays)
+		Ui()->DoScrollbarOption(&g_Config.m_ClReplayLength, &g_Config.m_ClReplayLength, &Button, Localize("Default length"), 10, 600, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_NOCLAMPVALUE);
+
 	Right.HSplitTop(20.0f, &Button, &Right);
-	if(DoButton_CheckBox(&g_Config.m_ClRaceGhost, Localize("Ghost"), g_Config.m_ClRaceGhost, &Button))
+	if(DoButton_CheckBox(&g_Config.m_ClRaceGhost, Localize("Enable ghost"), g_Config.m_ClRaceGhost, &Button))
 	{
 		g_Config.m_ClRaceGhost ^= 1;
 	}
@@ -2917,84 +2739,79 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 	if(g_Config.m_ClRaceGhost)
 	{
 		Right.HSplitTop(20.0f, &Button, &Right);
-		if(DoButton_CheckBox(&g_Config.m_ClRaceShowGhost, Localize("Show ghost"), g_Config.m_ClRaceShowGhost, &Button))
+		Button.VSplitMid(&LeftLeft, &Button);
+		if(DoButton_CheckBox(&g_Config.m_ClRaceShowGhost, Localize("Show ghost"), g_Config.m_ClRaceShowGhost, &LeftLeft))
 		{
 			g_Config.m_ClRaceShowGhost ^= 1;
 		}
+		Ui()->DoScrollbarOption(&g_Config.m_ClRaceGhostAlpha, &g_Config.m_ClRaceGhostAlpha, &Button, Localize("Opacity"), 0, 100, &CUi::ms_LinearScrollbarScale, 0u, "%");
 
 		Right.HSplitTop(20.0f, &Button, &Right);
 		if(DoButton_CheckBox(&g_Config.m_ClRaceSaveGhost, Localize("Save ghost"), g_Config.m_ClRaceSaveGhost, &Button))
 		{
 			g_Config.m_ClRaceSaveGhost ^= 1;
 		}
+
+		if(g_Config.m_ClRaceSaveGhost)
+		{
+			Right.HSplitTop(20.0f, &Button, &Right);
+			if(DoButton_CheckBox(&g_Config.m_ClRaceGhostSaveBest, Localize("Only save improvements"), g_Config.m_ClRaceGhostSaveBest, &Button))
+			{
+				g_Config.m_ClRaceGhostSaveBest ^= 1;
+			}
+		}
 	}
 
-	MainView.HSplitTop(330.0f, &Gameplay, &MainView);
-
+	// gameplay
+	CUIRect Gameplay;
+	MainView.HSplitTop(150.0f, &Gameplay, &MainView);
 	Gameplay.HSplitTop(30.0f, &Label, &Gameplay);
-	UI()->DoLabel(&Label, Localize("Gameplay"), 20.0f, TEXTALIGN_LEFT);
-	Gameplay.Margin(5.0f, &Gameplay);
-	Gameplay.VSplitMid(&Left, &Right);
-	Left.VSplitRight(5.0f, &Left, 0);
-	Right.VMargin(5.0f, &Right);
+	Ui()->DoLabel(&Label, Localize("Gameplay"), 20.0f, TEXTALIGN_ML);
+	Gameplay.HSplitTop(5.0f, nullptr, &Gameplay);
+	Gameplay.VSplitMid(&Left, &Right, 20.0f);
 
+	Left.HSplitTop(20.0f, &Button, &Left);
+	Ui()->DoScrollbarOption(&g_Config.m_ClOverlayEntities, &g_Config.m_ClOverlayEntities, &Button, Localize("Overlay entities"), 0, 100);
+
+	Left.HSplitTop(20.0f, &Button, &Left);
+	Button.VSplitMid(&LeftLeft, &Button);
+
+	if(DoButton_CheckBox(&g_Config.m_ClTextEntities, Localize("Show text entities"), g_Config.m_ClTextEntities, &LeftLeft))
+		g_Config.m_ClTextEntities ^= 1;
+
+	if(g_Config.m_ClTextEntities)
 	{
-		Left.HSplitTop(20.0f, &Button, &Left);
-		Button.VSplitLeft(120.0f, &Label, &Button);
-		UI()->DoLabel(&Label, Localize("Overlay entities"), 14.0f, TEXTALIGN_LEFT);
-		g_Config.m_ClOverlayEntities = (int)(UIEx()->DoScrollbarH(&g_Config.m_ClOverlayEntities, &Button, g_Config.m_ClOverlayEntities / 100.0f) * 100.0f);
-	}
-
-	{
-		Left.HSplitTop(20.0f, &Button, &Left);
-		Button.VSplitMid(&LeftLeft, &Button);
-
-		Button.VSplitLeft(50.0f, &Label, &Button);
-		UI()->DoLabel(&Label, Localize("Size"), 14.0f, TEXTALIGN_LEFT);
-		g_Config.m_ClTextEntitiesSize = (int)(UIEx()->DoScrollbarH(&g_Config.m_ClTextEntitiesSize, &Button, g_Config.m_ClTextEntitiesSize / 100.0f) * 100.0f);
-
-		if(DoButton_CheckBox(&g_Config.m_ClTextEntities, Localize("Show text entities"), g_Config.m_ClTextEntities, &LeftLeft))
-		{
-			g_Config.m_ClTextEntities ^= 1;
-		}
-	}
-
-	{
-		Left.HSplitTop(20.0f, &Button, &Left);
-		Button.VSplitMid(&LeftLeft, &Button);
-
-		Button.VSplitLeft(50.0f, &Label, &Button);
-		UI()->DoLabel(&Label, Localize("Opacity"), 14.0f, TEXTALIGN_LEFT);
-		g_Config.m_ClShowOthersAlpha = (int)(UIEx()->DoScrollbarH(&g_Config.m_ClShowOthersAlpha, &Button, g_Config.m_ClShowOthersAlpha / 100.0f) * 100.0f);
-
-		if(DoButton_CheckBox(&g_Config.m_ClShowOthers, Localize("Show others"), g_Config.m_ClShowOthers == SHOW_OTHERS_ON, &LeftLeft))
-		{
-			g_Config.m_ClShowOthers = g_Config.m_ClShowOthers != SHOW_OTHERS_ON ? SHOW_OTHERS_ON : SHOW_OTHERS_OFF;
-		}
-
-		GameClient()->m_Tooltips.DoToolTip(&g_Config.m_ClShowOthersAlpha, &Button, Localize("Adjust the opacity of entities belonging to other teams, such as tees and nameplates"));
+		if(Ui()->DoScrollbarOption(&g_Config.m_ClTextEntitiesSize, &g_Config.m_ClTextEntitiesSize, &Button, Localize("Size"), 20, 100, &CUi::ms_LinearScrollbarScale, CUi::SCROLLBAR_OPTION_DELAYUPDATE))
+			GameClient()->m_MapImages.SetTextureScale(g_Config.m_ClTextEntitiesSize);
 	}
 
 	Left.HSplitTop(20.0f, &Button, &Left);
-	static int s_ShowOwnTeamID = 0;
-	if(DoButton_CheckBox(&s_ShowOwnTeamID, Localize("Show others (own team only)"), g_Config.m_ClShowOthers == SHOW_OTHERS_ONLY_TEAM, &Button))
+	Button.VSplitMid(&LeftLeft, &Button);
+
+	if(DoButton_CheckBox(&g_Config.m_ClShowOthers, Localize("Show others"), g_Config.m_ClShowOthers == SHOW_OTHERS_ON, &LeftLeft))
+		g_Config.m_ClShowOthers = g_Config.m_ClShowOthers != SHOW_OTHERS_ON ? SHOW_OTHERS_ON : SHOW_OTHERS_OFF;
+
+	Ui()->DoScrollbarOption(&g_Config.m_ClShowOthersAlpha, &g_Config.m_ClShowOthersAlpha, &Button, Localize("Opacity"), 0, 100, &CUi::ms_LinearScrollbarScale, 0u, "%");
+
+	GameClient()->m_Tooltips.DoToolTip(&g_Config.m_ClShowOthersAlpha, &Button, Localize("Adjust the opacity of entities belonging to other teams, such as tees and name plates"));
+
+	Left.HSplitTop(20.0f, &Button, &Left);
+	static int s_ShowOwnTeamId = 0;
+	if(DoButton_CheckBox(&s_ShowOwnTeamId, Localize("Show others (own team only)"), g_Config.m_ClShowOthers == SHOW_OTHERS_ONLY_TEAM, &Button))
 	{
 		g_Config.m_ClShowOthers = g_Config.m_ClShowOthers != SHOW_OTHERS_ONLY_TEAM ? SHOW_OTHERS_ONLY_TEAM : SHOW_OTHERS_OFF;
 	}
 
 	Left.HSplitTop(20.0f, &Button, &Left);
-	if(DoButton_CheckBox(&g_Config.m_ClShowQuads, Localize("Show quads"), g_Config.m_ClShowQuads, &Button))
+	if(DoButton_CheckBox(&g_Config.m_ClShowQuads, Localize("Show background quads"), g_Config.m_ClShowQuads, &Button))
 	{
 		g_Config.m_ClShowQuads ^= 1;
 	}
 	GameClient()->m_Tooltips.DoToolTip(&g_Config.m_ClShowQuads, &Button, Localize("Quads are used for background decoration"));
 
-	Right.HSplitTop(20.0f, &Label, &Right);
-	Label.VSplitLeft(130.0f, &Label, &Button);
-	char aBuf[256];
-	str_format(aBuf, sizeof(aBuf), "%s: %i", Localize("Default zoom"), g_Config.m_ClDefaultZoom);
-	UI()->DoLabel(&Label, aBuf, 14.0f, TEXTALIGN_LEFT);
-	g_Config.m_ClDefaultZoom = static_cast<int>(UIEx()->DoScrollbarH(&g_Config.m_ClDefaultZoom, &Button, g_Config.m_ClDefaultZoom / 20.0f) * 20.0f + 0.1f);
+	Right.HSplitTop(20.0f, &Button, &Right);
+	if(Ui()->DoScrollbarOption(&g_Config.m_ClDefaultZoom, &g_Config.m_ClDefaultZoom, &Button, Localize("Default zoom"), 0, 20))
+		GameClient()->m_Camera.SetZoom(CCamera::ZoomStepsToValue(g_Config.m_ClDefaultZoom - 10), g_Config.m_ClSmoothZoomTime, true);
 
 	Right.HSplitTop(20.0f, &Button, &Right);
 	if(DoButton_CheckBox(&g_Config.m_ClAntiPing, Localize("AntiPing"), g_Config.m_ClAntiPing, &Button))
@@ -3022,154 +2839,244 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 		{
 			g_Config.m_ClAntiPingGrenade ^= 1;
 		}
-	}
-	else
-	{
-		Right.HSplitTop(60.0f, 0, &Right);
+		Right.HSplitTop(20.0f, &Button, &Right);
+		Ui()->DoScrollbarOption(&g_Config.m_ClPredictionMargin, &g_Config.m_ClPredictionMargin, &Button, Localize("AntiPing: prediction margin"), 1, 300);
 	}
 
-	Right.HSplitTop(40.0f, 0, &Right);
+	CUIRect Background, Miscellaneous;
+	MainView.VSplitMid(&Background, &Miscellaneous, 20.0f);
 
-	Left.HSplitTop(20.0f, &Button, &Left);
-	if(DoButton_CheckBox(&g_Config.m_ClShowHookCollOther, Localize("Show other players' hook collision lines"), g_Config.m_ClShowHookCollOther, &Button))
-	{
-		g_Config.m_ClShowHookCollOther = g_Config.m_ClShowHookCollOther >= 1 ? 0 : 1;
-	}
+	// background
+	Background.HSplitTop(30.0f, &Label, &Background);
+	Background.HSplitTop(5.0f, nullptr, &Background);
+	Ui()->DoLabel(&Label, Localize("Background"), 20.0f, TEXTALIGN_ML);
 
-	Left.HSplitTop(20.0f, &Button, &Left);
-	if(DoButton_CheckBox(&g_Config.m_ClShowDirection, Localize("Show other players' key presses"), g_Config.m_ClShowDirection >= 1, &Button))
-	{
-		g_Config.m_ClShowDirection = g_Config.m_ClShowDirection >= 1 ? 0 : 1;
-	}
-
-	Left.HSplitTop(20.0f, &Button, &Left);
-	static int s_ShowLocalPlayer = 0;
-	if(DoButton_CheckBox(&s_ShowLocalPlayer, Localize("Show local player's key presses"), g_Config.m_ClShowDirection == 2, &Button))
-	{
-		g_Config.m_ClShowDirection = g_Config.m_ClShowDirection != 2 ? 2 : 1;
-	}
-
-	Left.HSplitTop(20.0f, &Button, &Left);
-	if(DoButton_CheckBox(&g_Config.m_InpMouseOld, Localize("Old mouse mode"), g_Config.m_InpMouseOld, &Button))
-	{
-		g_Config.m_InpMouseOld ^= 1;
-		CheckSettings = true;
-	}
-
-	if(CheckSettings)
-		m_NeedRestartDDNet = s_InpMouseOld != g_Config.m_InpMouseOld;
-
-	Left.HSplitTop(5.0f, &Button, &Left);
-	Right.HSplitTop(25.0f, &Button, &Right);
-	Left.VSplitRight(10.0f, &Left, 0x0);
-	Right.VSplitLeft(10.0f, 0x0, &Right);
-	Left.HSplitTop(25.0f, 0x0, &Left);
-	CUIRect TempLabel;
-	Left.HSplitTop(25.0f, &TempLabel, &Left);
-	Left.HSplitTop(5.0f, 0x0, &Left);
-
-	UI()->DoLabel(&TempLabel, Localize("Background"), 20.0f, TEXTALIGN_LEFT);
-
-	Right.HSplitTop(45.0f, 0x0, &Right);
-	Right.HSplitTop(25.0f, &TempLabel, &Right);
-	Right.HSplitTop(5.0f, 0x0, &Miscellaneous);
-
-	UI()->DoLabel(&TempLabel, Localize("Miscellaneous"), 20.0f, TEXTALIGN_LEFT);
-
-	static int ResetID1 = 0;
-	static int ResetID2 = 0;
 	ColorRGBA GreyDefault(0.5f, 0.5f, 0.5f, 1);
-	DoLine_ColorPicker(&ResetID2, 25.0f, 194.0f, 13.0f, 5.0f, &Left, Localize("Entities Background color"), &g_Config.m_ClBackgroundEntitiesColor, GreyDefault, false);
 
-	Left.VSplitLeft(5.0f, 0x0, &Left);
-	Left.HSplitTop(25.0f, &Background, &Left);
-	Background.HSplitTop(20.0f, &Background, 0);
-	Background.VSplitLeft(100.0f, &Label, &TempLabel);
-	UI()->DoLabel(&Label, Localize("Map"), 14.0f, TEXTALIGN_LEFT);
-	static float s_Map = 0.0f;
-	UIEx()->DoEditBox(g_Config.m_ClBackgroundEntities, &TempLabel, g_Config.m_ClBackgroundEntities, sizeof(g_Config.m_ClBackgroundEntities), 14.0f, &s_Map);
+	static CButtonContainer s_ResetId1;
+	DoLine_ColorPicker(&s_ResetId1, 25.0f, 13.0f, 5.0f, &Background, Localize("Regular background color"), &g_Config.m_ClBackgroundColor, GreyDefault, false);
 
-	Left.HSplitTop(20.0f, &Button, &Left);
-	bool UseCurrentMap = str_comp(g_Config.m_ClBackgroundEntities, CURRENT_MAP) == 0;
-	static int s_UseCurrentMapID = 0;
-	if(DoButton_CheckBox(&s_UseCurrentMapID, Localize("Use current map as background"), UseCurrentMap, &Button))
+	static CButtonContainer s_ResetId2;
+	DoLine_ColorPicker(&s_ResetId2, 25.0f, 13.0f, 5.0f, &Background, Localize("Entities background color"), &g_Config.m_ClBackgroundEntitiesColor, GreyDefault, false);
+
+	CUIRect EditBox, ReloadButton;
+	Background.HSplitTop(20.0f, &Label, &Background);
+	Background.HSplitTop(2.0f, nullptr, &Background);
+	Label.VSplitLeft(100.0f, &Label, &EditBox);
+	EditBox.VSplitRight(60.0f, &EditBox, &Button);
+	Button.VSplitMid(&ReloadButton, &Button, 5.0f);
+	EditBox.VSplitRight(5.0f, &EditBox, nullptr);
+
+	Ui()->DoLabel(&Label, Localize("Map"), 14.0f, TEXTALIGN_ML);
+
+	static CLineInput s_BackgroundEntitiesInput(g_Config.m_ClBackgroundEntities, sizeof(g_Config.m_ClBackgroundEntities));
+	Ui()->DoEditBox(&s_BackgroundEntitiesInput, &EditBox, 14.0f);
+
+	static CButtonContainer s_BackgroundEntitiesMapPicker, s_BackgroundEntitiesReload;
+
+	if(Ui()->DoButton_FontIcon(&s_BackgroundEntitiesReload, FontIcon::ARROW_ROTATE_RIGHT, 0, &ReloadButton, BUTTONFLAG_LEFT))
+	{
+		GameClient()->m_Background.LoadBackground();
+	}
+
+	if(Ui()->DoButton_FontIcon(&s_BackgroundEntitiesMapPicker, FontIcon::FOLDER, 0, &Button, BUTTONFLAG_LEFT))
+	{
+		static SPopupMenuId s_PopupMapPickerId;
+		static CPopupMapPickerContext s_PopupMapPickerContext;
+		s_PopupMapPickerContext.m_pMenus = this;
+		s_PopupMapPickerContext.MapListPopulate();
+		Ui()->DoPopupMenu(&s_PopupMapPickerId, Ui()->MouseX(), Ui()->MouseY(), 300.0f, 250.0f, &s_PopupMapPickerContext, PopupMapPicker);
+	}
+
+	Background.HSplitTop(20.0f, &Button, &Background);
+	const bool UseCurrentMap = str_comp(g_Config.m_ClBackgroundEntities, CURRENT_MAP) == 0;
+	static int s_UseCurrentMapId = 0;
+	if(DoButton_CheckBox(&s_UseCurrentMapId, Localize("Use current map as background"), UseCurrentMap, &Button))
 	{
 		if(UseCurrentMap)
 			g_Config.m_ClBackgroundEntities[0] = '\0';
 		else
-			str_copy(g_Config.m_ClBackgroundEntities, CURRENT_MAP, sizeof(g_Config.m_ClBackgroundEntities));
+			str_copy(g_Config.m_ClBackgroundEntities, CURRENT_MAP);
+		GameClient()->m_Background.LoadBackground();
 	}
 
-	Left.HSplitTop(20.0f, &Button, &Left);
+	Background.HSplitTop(20.0f, &Button, &Background);
 	if(DoButton_CheckBox(&g_Config.m_ClBackgroundShowTilesLayers, Localize("Show tiles layers from BG map"), g_Config.m_ClBackgroundShowTilesLayers, &Button))
 		g_Config.m_ClBackgroundShowTilesLayers ^= 1;
 
-	Miscellaneous.HSplitTop(25.0f, &Button, &Right);
-	DoLine_ColorPicker(&ResetID1, 25.0f, 194.0f, 13.0f, 5.0f, &Button, Localize("Regular Background Color"), &g_Config.m_ClBackgroundColor, GreyDefault, false);
-	Right.HSplitTop(5.0f, 0x0, &Right);
-	Right.HSplitTop(20.0f, &Button, &Right);
-	if(DoButton_CheckBox(&g_Config.m_ClHttpMapDownload, Localize("Try fast HTTP map download first"), g_Config.m_ClHttpMapDownload, &Button))
-		g_Config.m_ClHttpMapDownload ^= 1;
+	// miscellaneous
+	Miscellaneous.HSplitTop(30.0f, &Label, &Miscellaneous);
+	Miscellaneous.HSplitTop(5.0f, nullptr, &Miscellaneous);
 
-	static int s_ButtonTimeout = 0;
-	Right.HSplitTop(10.0f, 0x0, &Right);
-	Right.HSplitTop(20.0f, &Button, &Right);
+	Ui()->DoLabel(&Label, Localize("Miscellaneous"), 20.0f, TEXTALIGN_ML);
+
+	static CButtonContainer s_ButtonTimeout;
+	Miscellaneous.HSplitTop(20.0f, &Button, &Miscellaneous);
 	if(DoButton_Menu(&s_ButtonTimeout, Localize("New random timeout code"), 0, &Button))
 	{
 		Client()->GenerateTimeoutSeed();
 	}
 
-	static float s_RunOnJoin = 0.0f;
-	Right.HSplitTop(5.0f, 0, &Right);
-	Right.HSplitTop(20.0f, &Label, &Right);
-	Label.VSplitLeft(5.0f, 0, &Label);
-	UI()->DoLabel(&Label, Localize("Run on join"), 14.0f, TEXTALIGN_LEFT);
-	Right.HSplitTop(20.0f, &Button, &Right);
-	Button.VSplitLeft(5.0f, 0, &Button);
-	SUIExEditBoxProperties EditProps;
-	EditProps.m_pEmptyText = Localize("Chat command (e.g. showall 1)");
-	UIEx()->DoEditBox(g_Config.m_ClRunOnJoin, &Button, g_Config.m_ClRunOnJoin, sizeof(g_Config.m_ClRunOnJoin), 14.0f, &s_RunOnJoin, false, CUI::CORNER_ALL, EditProps);
+	Miscellaneous.HSplitTop(5.0f, nullptr, &Miscellaneous);
+	Miscellaneous.HSplitTop(20.0f, &Label, &Miscellaneous);
+	Miscellaneous.HSplitTop(2.0f, nullptr, &Miscellaneous);
+	Ui()->DoLabel(&Label, Localize("Run on join"), 14.0f, TEXTALIGN_ML);
+	Miscellaneous.HSplitTop(20.0f, &Button, &Miscellaneous);
+	static CLineInput s_RunOnJoinInput(g_Config.m_ClRunOnJoin, sizeof(g_Config.m_ClRunOnJoin));
+	s_RunOnJoinInput.SetEmptyText(Localize("Chat command (e.g. showall 1)"));
+	Ui()->DoEditBox(&s_RunOnJoinInput, &Button, 14.0f);
+
+#if defined(CONF_FAMILY_WINDOWS)
+	static CButtonContainer s_ButtonUnregisterShell;
+	Miscellaneous.HSplitTop(10.0f, nullptr, &Miscellaneous);
+	Miscellaneous.HSplitTop(20.0f, &Button, &Miscellaneous);
+	if(DoButton_Menu(&s_ButtonUnregisterShell, Localize("Unregister protocol and file extensions"), 0, &Button))
+	{
+		Client()->ShellUnregister();
+	}
+#endif
+
 	// Updater
 #if defined(CONF_AUTOUPDATE)
 	{
-		MainView.VSplitMid(&Left, &Right);
-		Left.w += 20.0f;
-		Left.HSplitBottom(20.0f, 0x0, &Label);
 		bool NeedUpdate = str_comp(Client()->LatestVersion(), "0");
-		int State = Updater()->GetCurrentState();
+		IUpdater::EUpdaterState State = Updater()->GetCurrentState();
 
 		// Update Button
+		char aBuf[256];
 		if(NeedUpdate && State <= IUpdater::CLEAN)
 		{
 			str_format(aBuf, sizeof(aBuf), Localize("DDNet %s is available:"), Client()->LatestVersion());
-			Label.VSplitLeft(TextRender()->TextWidth(0, 14.0f, aBuf, -1, -1.0f) + 10.0f, &Label, &Button);
-			Button.VSplitLeft(100.0f, &Button, 0);
-			static int s_ButtonUpdate = 0;
+			UpdaterRect.VSplitLeft(TextRender()->TextWidth(14.0f, aBuf, -1, -1.0f) + 10.0f, &UpdaterRect, &Button);
+			Button.VSplitLeft(100.0f, &Button, nullptr);
+			static CButtonContainer s_ButtonUpdate;
 			if(DoButton_Menu(&s_ButtonUpdate, Localize("Update now"), 0, &Button))
 			{
 				Updater()->InitiateUpdate();
 			}
 		}
 		else if(State >= IUpdater::GETTING_MANIFEST && State < IUpdater::NEED_RESTART)
-			str_format(aBuf, sizeof(aBuf), Localize("Updating..."));
+			str_copy(aBuf, Localize("Updating…"));
 		else if(State == IUpdater::NEED_RESTART)
 		{
-			str_format(aBuf, sizeof(aBuf), Localize("DDNet Client updated!"));
+			str_copy(aBuf, Localize("DDNet Client updated!"));
 			m_NeedRestartUpdate = true;
 		}
 		else
 		{
-			str_format(aBuf, sizeof(aBuf), Localize("No updates available"));
-			Label.VSplitLeft(TextRender()->TextWidth(0, 14.0f, aBuf, -1, -1.0f) + 10.0f, &Label, &Button);
-			Button.VSplitLeft(100.0f, &Button, 0);
-			static int s_ButtonUpdate = 0;
+			str_copy(aBuf, Localize("No updates available"));
+			UpdaterRect.VSplitLeft(TextRender()->TextWidth(14.0f, aBuf, -1, -1.0f) + 10.0f, &UpdaterRect, &Button);
+			Button.VSplitLeft(100.0f, &Button, nullptr);
+			static CButtonContainer s_ButtonUpdate;
 			if(DoButton_Menu(&s_ButtonUpdate, Localize("Check now"), 0, &Button))
 			{
 				Client()->RequestDDNetInfo();
 			}
 		}
-		UI()->DoLabel(&Label, aBuf, 14.0f, TEXTALIGN_LEFT);
+		Ui()->DoLabel(&UpdaterRect, aBuf, 14.0f, TEXTALIGN_ML);
 		TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 	}
 #endif
+}
+
+CUi::EPopupMenuFunctionResult CMenus::PopupMapPicker(void *pContext, CUIRect View, bool Active)
+{
+	CPopupMapPickerContext *pPopupContext = static_cast<CPopupMapPickerContext *>(pContext);
+	CMenus *pMenus = pPopupContext->m_pMenus;
+
+	static CListBox s_ListBox;
+	s_ListBox.SetActive(Active);
+	s_ListBox.DoStart(20.0f, pPopupContext->m_vMaps.size(), 1, 3, -1, &View, false);
+
+	int MapIndex = 0;
+	for(auto &Map : pPopupContext->m_vMaps)
+	{
+		MapIndex++;
+		const CListboxItem Item = s_ListBox.DoNextItem(&Map, MapIndex == pPopupContext->m_Selection);
+		if(!Item.m_Visible)
+			continue;
+
+		CUIRect Label, Icon;
+		Item.m_Rect.VSplitLeft(20.0f, &Icon, &Label);
+
+		char aLabelText[IO_MAX_PATH_LENGTH];
+		str_copy(aLabelText, Map.m_aFilename);
+		if(Map.m_IsDirectory)
+			str_append(aLabelText, "/", sizeof(aLabelText));
+
+		const char *pIconType;
+		if(!Map.m_IsDirectory)
+		{
+			pIconType = FontIcon::MAP;
+		}
+		else
+		{
+			if(!str_comp(Map.m_aFilename, ".."))
+				pIconType = FontIcon::FOLDER_TREE;
+			else
+				pIconType = FontIcon::FOLDER;
+		}
+
+		pMenus->TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+		pMenus->TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING);
+		pMenus->Ui()->DoLabel(&Icon, pIconType, 12.0f, TEXTALIGN_ML);
+		pMenus->TextRender()->SetRenderFlags(0);
+		pMenus->TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+
+		pMenus->Ui()->DoLabel(&Label, aLabelText, 10.0f, TEXTALIGN_ML);
+	}
+
+	const int NewSelected = s_ListBox.DoEnd();
+	pPopupContext->m_Selection = NewSelected >= 0 ? NewSelected : -1;
+	if(s_ListBox.WasItemSelected() || s_ListBox.WasItemActivated())
+	{
+		const CMapListItem &SelectedItem = pPopupContext->m_vMaps[pPopupContext->m_Selection];
+
+		if(SelectedItem.m_IsDirectory)
+		{
+			if(!str_comp(SelectedItem.m_aFilename, ".."))
+			{
+				fs_parent_dir(pPopupContext->m_aCurrentMapFolder);
+			}
+			else
+			{
+				str_append(pPopupContext->m_aCurrentMapFolder, "/", sizeof(pPopupContext->m_aCurrentMapFolder));
+				str_append(pPopupContext->m_aCurrentMapFolder, SelectedItem.m_aFilename, sizeof(pPopupContext->m_aCurrentMapFolder));
+			}
+			pPopupContext->MapListPopulate();
+		}
+		else
+		{
+			str_format(g_Config.m_ClBackgroundEntities, sizeof(g_Config.m_ClBackgroundEntities), "%s/%s", pPopupContext->m_aCurrentMapFolder, SelectedItem.m_aFilename);
+			pMenus->GameClient()->m_Background.LoadBackground();
+			return CUi::POPUP_CLOSE_CURRENT;
+		}
+	}
+
+	return CUi::POPUP_KEEP_OPEN;
+}
+
+void CMenus::CPopupMapPickerContext::MapListPopulate()
+{
+	m_vMaps.clear();
+	char aTemp[IO_MAX_PATH_LENGTH];
+	str_format(aTemp, sizeof(aTemp), "maps/%s", m_aCurrentMapFolder);
+	m_pMenus->Storage()->ListDirectoryInfo(IStorage::TYPE_ALL, aTemp, MapListFetchCallback, this);
+	std::stable_sort(m_vMaps.begin(), m_vMaps.end(), CompareFilenameAscending);
+	m_Selection = -1;
+}
+
+int CMenus::CPopupMapPickerContext::MapListFetchCallback(const CFsFileInfo *pInfo, int IsDir, int StorageType, void *pUser)
+{
+	CPopupMapPickerContext *pRealUser = (CPopupMapPickerContext *)pUser;
+	if((!IsDir && !str_endswith(pInfo->m_pName, ".map")) || !str_comp(pInfo->m_pName, ".") || (!str_comp(pInfo->m_pName, "..") && (!str_comp(pRealUser->m_aCurrentMapFolder, ""))))
+		return 0;
+
+	CMapListItem Item;
+	str_copy(Item.m_aFilename, pInfo->m_pName);
+	Item.m_IsDirectory = IsDir;
+
+	pRealUser->m_vMaps.emplace_back(Item);
+
+	return 0;
 }

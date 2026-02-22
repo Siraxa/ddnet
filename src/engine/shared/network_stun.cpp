@@ -3,6 +3,8 @@
 #include <base/log.h>
 #include <base/system.h>
 
+#include <algorithm>
+
 static int IndexFromNetType(int NetType)
 {
 	switch(NetType)
@@ -24,13 +26,12 @@ static const char *IndexToSystem(int Index)
 	case 1:
 		return "stun/4";
 	}
-	dbg_break();
-	return nullptr;
+	dbg_assert_failed("invalid index %d", Index);
 }
 
 static int RetryWaitSeconds(int NumUnsuccessfulTries)
 {
-	return (1 << clamp(NumUnsuccessfulTries, 0, 9));
+	return (1 << std::clamp(NumUnsuccessfulTries, 0, 9));
 }
 
 CStun::CProtocol::CProtocol(int Index, NETSOCKET Socket) :
@@ -45,7 +46,7 @@ CStun::CProtocol::CProtocol(int Index, NETSOCKET Socket) :
 
 void CStun::CProtocol::FeedStunServer(NETADDR StunServer)
 {
-	if(net_addr_comp(&m_StunServer, &StunServer) == 0)
+	if(m_HaveStunServer && net_addr_comp(&m_StunServer, &StunServer) == 0)
 	{
 		return;
 	}

@@ -1,5 +1,6 @@
 #include <base/logger.h>
 #include <base/system.h>
+
 #include <engine/storage.h>
 
 struct SListDirectoryContext
@@ -27,7 +28,7 @@ inline void ProcessItem(const char *pItemName, IStorage *pStorage)
 
 	str_copy(aConfig, pItemName, sizeof(aConfig));
 	aConfig[Len - sizeof(".map")] = 0;
-	str_append(aConfig, ".cfg", sizeof(aConfig));
+	str_append(aConfig, ".cfg");
 	dbg_msg("config_common", "processing '%s'", pItemName);
 	Process(pStorage, pItemName, aConfig);
 }
@@ -50,9 +51,12 @@ int main(int argc, const char **argv) // NOLINT(misc-definitions-in-headers)
 	CCmdlineFix CmdlineFix(&argc, &argv);
 	log_set_global_logger_default();
 
-	IStorage *pStorage = CreateLocalStorage();
+	std::unique_ptr<IStorage> pStorage = CreateLocalStorage();
 	if(!pStorage)
+	{
+		log_error("config_common", "Error creating local storage");
 		return -1;
+	}
 
 	if(argc == 1)
 	{
@@ -62,13 +66,13 @@ int main(int argc, const char **argv) // NOLINT(misc-definitions-in-headers)
 	}
 	else if(argc == 2 && fs_is_dir(argv[1]))
 	{
-		SListDirectoryContext Context = {argv[1], pStorage};
+		SListDirectoryContext Context = {argv[1], pStorage.get()};
 		pStorage->ListDirectory(IStorage::TYPE_ALL, argv[1], ListdirCallback, &Context);
 	}
 
 	for(int i = 1; i < argc; i++)
 	{
-		ProcessItem(argv[i], pStorage);
+		ProcessItem(argv[i], pStorage.get());
 	}
 	return 0;
 }

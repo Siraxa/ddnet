@@ -3,9 +3,8 @@
 #include <base/logger.h>
 #include <base/system.h>
 
-#include <array> // std::size
 #include <cstdlib>
-
+#include <iterator> // std::size
 #include <thread>
 
 struct SPacket
@@ -15,13 +14,13 @@ struct SPacket
 
 	NETADDR m_SendTo;
 	int64_t m_Timestamp;
-	int m_ID;
+	int m_Id;
 	int m_DataSize;
 	char m_aData[1];
 };
 
-static SPacket *g_pFirst = (SPacket *)0;
-static SPacket *g_pLast = (SPacket *)0;
+static SPacket *g_pFirst = (SPacket *)nullptr;
+static SPacket *g_pLast = (SPacket *)nullptr;
 static int g_CurrentLatency = 0;
 
 struct SPingConfig
@@ -46,12 +45,12 @@ static int g_ConfigInterval = 10; // seconds between different pingconfigs
 static int g_ConfigLog = 0;
 static int g_ConfigReorder = 0;
 
-void Run(unsigned short Port, NETADDR Dest)
+static void Run(unsigned short Port, NETADDR Dest)
 {
 	NETADDR Src = {NETTYPE_IPV4, {0, 0, 0, 0}, Port};
 	NETSOCKET Socket = net_udp_create(Src);
 
-	int ID = 0;
+	int Id = 0;
 	int Delaycounter = 0;
 
 	while(true)
@@ -95,7 +94,7 @@ void Run(unsigned short Port, NETADDR Dest)
 
 			// queue packet
 			p->m_pPrev = g_pLast;
-			p->m_pNext = 0;
+			p->m_pNext = nullptr;
 			if(g_pLast)
 				g_pLast->m_pNext = p;
 			else
@@ -108,10 +107,10 @@ void Run(unsigned short Port, NETADDR Dest)
 			// set data in packet
 			p->m_Timestamp = time_get();
 			p->m_DataSize = Bytes;
-			p->m_ID = ID++;
+			p->m_Id = Id++;
 			mem_copy(p->m_aData, pData, Bytes);
 
-			if(ID > 20 && Bytes > 6 && DataTrash)
+			if(Id > 20 && Bytes > 6 && DataTrash)
 			{
 				p->m_aData[6 + (rand() % (Bytes - 6))] = rand() & 255; // modify a byte
 				if((rand() % 10) == 0)
@@ -134,15 +133,14 @@ void Run(unsigned short Port, NETADDR Dest)
 			{
 				char aAddrStr[NETADDR_MAXSTRSIZE];
 				net_addr_str(&From, aAddrStr, sizeof(aAddrStr), true);
-				dbg_msg("crapnet", "<< %08d %s (%d)", p->m_ID, aAddrStr, p->m_DataSize);
+				dbg_msg("crapnet", "<< %08d %s (%d)", p->m_Id, aAddrStr, p->m_DataSize);
 			}
 		}
 
-		SPacket *p = 0;
 		SPacket *pNext = g_pFirst;
 		while(true)
 		{
-			p = pNext;
+			SPacket *p = pNext;
 			if(!p)
 				break;
 			pNext = p->m_pNext;
@@ -177,7 +175,7 @@ void Run(unsigned short Port, NETADDR Dest)
 				int MsPing = Ping.m_Base;
 				g_CurrentLatency = ((time_freq() * MsPing) / 1000) + (int64_t)(((time_freq() * MsFlux) / 1000) * Flux); // 50ms
 
-				if(MsSpike && (p->m_ID % 100) == 0)
+				if(MsSpike && (p->m_Id % 100) == 0)
 				{
 					g_CurrentLatency += (time_freq() * MsSpike) / 1000;
 					aFlags[1] = 'S';
@@ -187,7 +185,7 @@ void Run(unsigned short Port, NETADDR Dest)
 				{
 					char aAddrStr[NETADDR_MAXSTRSIZE];
 					net_addr_str(&p->m_SendTo, aAddrStr, sizeof(aAddrStr), true);
-					dbg_msg("crapnet", ">> %08d %s (%d) %s", p->m_ID, aAddrStr, p->m_DataSize, aFlags);
+					dbg_msg("crapnet", ">> %08d %s (%d) %s", p->m_Id, aAddrStr, p->m_DataSize, aFlags);
 				}
 
 				free(p);

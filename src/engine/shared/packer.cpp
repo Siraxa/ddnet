@@ -1,18 +1,25 @@
 /* (c) Magnus Auvinen. See licence.txt in the root of the distribution for more information. */
 /* If you are missing that file, acquire a complete release at teeworlds.com.                */
-#include <base/system.h>
-
-#include "compression.h"
 #include "packer.h"
 
-void CPacker::Reset()
+#include "compression.h"
+
+#include <base/system.h>
+
+CAbstractPacker::CAbstractPacker(unsigned char *pBuffer, size_t Size) :
+	m_pBuffer(pBuffer),
+	m_BufferSize(Size)
 {
-	m_Error = 0;
-	m_pCurrent = m_aBuffer;
-	m_pEnd = m_pCurrent + PACKER_BUFFER_SIZE;
 }
 
-void CPacker::AddInt(int i)
+void CAbstractPacker::Reset()
+{
+	m_Error = false;
+	m_pCurrent = m_pBuffer;
+	m_pEnd = m_pCurrent + m_BufferSize;
+}
+
+void CAbstractPacker::AddInt(int i)
 {
 	if(m_Error)
 		return;
@@ -20,69 +27,74 @@ void CPacker::AddInt(int i)
 	unsigned char *pNext = CVariableInt::Pack(m_pCurrent, i, m_pEnd - m_pCurrent);
 	if(!pNext)
 	{
-		m_Error = 1;
+		m_Error = true;
 		return;
 	}
 	m_pCurrent = pNext;
 }
 
-void CPacker::AddString(const char *pStr, int Limit)
+void CAbstractPacker::AddString(const char *pStr, int Limit, bool AllowTruncation)
 {
 	if(m_Error)
 		return;
 
+	unsigned char *const pPrevCurrent = m_pCurrent;
 	if(Limit <= 0)
 	{
-		Limit = PACKER_BUFFER_SIZE;
+		Limit = m_BufferSize;
 	}
-	while(*pStr && Limit != 0)
+	while(*pStr)
 	{
 		int Codepoint = str_utf8_decode(&pStr);
 		if(Codepoint == -1)
 		{
 			Codepoint = 0xfffd; // Unicode replacement character.
 		}
-		char aGarbage[4];
-		int Length = str_utf8_encode(aGarbage, Codepoint);
+		char aEncoded[4];
+		const int Length = str_utf8_encode(aEncoded, Codepoint);
+		// Limit must ensure space for null termination if desired.
 		if(Limit < Length)
 		{
-			break;
+			if(AllowTruncation)
+			{
+				break;
+			}
+			m_Error = true;
+			m_pCurrent = pPrevCurrent;
+			return;
 		}
 		// Ensure space for the null termination.
-		if(m_pEnd - m_pCurrent < Length + 1)
+		if(m_pCurrent + Length + 1 > m_pEnd)
 		{
-			m_Error = 1;
-			break;
+			m_Error = true;
+			m_pCurrent = pPrevCurrent;
+			return;
 		}
-		Length = str_utf8_encode((char *)m_pCurrent, Codepoint);
+		mem_copy(m_pCurrent, aEncoded, Length);
 		m_pCurrent += Length;
 		Limit -= Length;
 	}
-	*m_pCurrent++ = 0;
+	*m_pCurrent++ = '\0';
 }
 
-void CPacker::AddRaw(const void *pData, int Size)
+void CAbstractPacker::AddRaw(const void *pData, int Size)
 {
 	if(m_Error)
 		return;
 
-	if(m_pCurrent + Size >= m_pEnd)
+	if(m_pCurrent + Size > m_pEnd)
 	{
-		m_Error = 1;
+		m_Error = true;
 		return;
 	}
 
-	const unsigned char *pSrc = (const unsigned char *)pData;
-	while(Size)
-	{
-		*m_pCurrent++ = *pSrc++;
-		Size--;
-	}
+	mem_copy(m_pCurrent, pData, Size);
+	m_pCurrent += Size;
 }
 
 void CUnpacker::Reset(const void *pData, int Size)
 {
-	m_Error = 0;
+	m_Error = false;
 	m_pStart = (const unsigned char *)pData;
 	m_pEnd = m_pStart + Size;
 	m_pCurrent = m_pStart;
@@ -95,7 +107,7 @@ int CUnpacker::GetInt()
 
 	if(m_pCurrent >= m_pEnd)
 	{
-		m_Error = 1;
+		m_Error = true;
 		return 0;
 	}
 
@@ -103,7 +115,7 @@ int CUnpacker::GetInt()
 	const unsigned char *pNext = CVariableInt::Unpack(m_pCurrent, &i, m_pEnd - m_pCurrent);
 	if(!pNext)
 	{
-		m_Error = 1;
+		m_Error = true;
 		return 0;
 	}
 	m_pCurrent = pNext;
@@ -123,6 +135,36 @@ int CUnpacker::GetIntOrDefault(int Default)
 	return GetInt();
 }
 
+int CUnpacker::GetUncompressedInt()
+{
+	if(m_Error)
+		return 0;
+
+	if(m_pCurrent + sizeof(int) > m_pEnd)
+	{
+		m_Error = true;
+		return 0;
+	}
+
+	int i;
+	mem_copy(&i, m_pCurrent, sizeof(int));
+	m_pCurrent += sizeof(int);
+	return i;
+}
+
+int CUnpacker::GetUncompressedIntOrDefault(int Default)
+{
+	if(m_Error)
+	{
+		return 0;
+	}
+	if(m_pCurrent == m_pEnd)
+	{
+		return Default;
+	}
+	return GetUncompressedInt();
+}
+
 const char *CUnpacker::GetString(int SanitizeType)
 {
 	if(m_Error)
@@ -130,7 +172,7 @@ const char *CUnpacker::GetString(int SanitizeType)
 
 	if(m_pCurrent >= m_pEnd)
 	{
-		m_Error = 1;
+		m_Error = true;
 		return "";
 	}
 
@@ -140,11 +182,17 @@ const char *CUnpacker::GetString(int SanitizeType)
 		m_pCurrent++;
 		if(m_pCurrent == m_pEnd)
 		{
-			m_Error = 1;
+			m_Error = true;
 			return "";
 		}
 	}
 	m_pCurrent++;
+
+	if(!str_utf8_check(pPtr))
+	{
+		m_Error = true;
+		return "";
+	}
 
 	// sanitize all strings
 	if(SanitizeType & SANITIZE)
@@ -158,13 +206,13 @@ const unsigned char *CUnpacker::GetRaw(int Size)
 {
 	const unsigned char *pPtr = m_pCurrent;
 	if(m_Error)
-		return 0;
+		return nullptr;
 
 	// check for nasty sizes
 	if(Size < 0 || m_pCurrent + Size > m_pEnd)
 	{
-		m_Error = 1;
-		return 0;
+		m_Error = true;
+		return nullptr;
 	}
 
 	// "unpack" the data

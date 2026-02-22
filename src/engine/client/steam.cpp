@@ -1,6 +1,7 @@
-#include <engine/steam.h>
+#include <base/system.h>
 
 #include <engine/shared/config.h>
+#include <engine/steam.h>
 
 #include <steam/steam_api_flat.h>
 
@@ -22,9 +23,9 @@ public:
 		m_pSteamFriends = SteamAPI_SteamFriends_v017();
 
 		ReadLaunchCommandLine();
-		str_copy(m_aPlayerName, SteamAPI_ISteamFriends_GetPersonaName(m_pSteamFriends), sizeof(m_aPlayerName));
+		str_copy(m_aPlayerName, SteamAPI_ISteamFriends_GetPersonaName(m_pSteamFriends));
 	}
-	~CSteam()
+	~CSteam() override
 	{
 		SteamAPI_Shutdown();
 	}
@@ -61,7 +62,7 @@ public:
 
 	void OnGameRichPresenceJoinRequested(GameRichPresenceJoinRequested_t *pEvent)
 	{
-		ParseConnectString(pEvent->m_rgchConnect);
+		ParseConnectString(pEvent->m_aRGCHConnect);
 	}
 
 	const char *GetPlayerName() override
@@ -77,7 +78,7 @@ public:
 		}
 		else
 		{
-			return 0;
+			return nullptr;
 		}
 	}
 	void ClearConnectAddress() override
@@ -112,27 +113,30 @@ public:
 	{
 		SteamAPI_ISteamFriends_ClearRichPresence(m_pSteamFriends);
 	}
-	void SetGameInfo(NETADDR ServerAddr, const char *pMapName) override
+	void SetGameInfo(const NETADDR &ServerAddr, const char *pMapName, bool AnnounceAddr) override
 	{
-		char aServerAddr[NETADDR_MAXSTRSIZE];
-		net_addr_str(&ServerAddr, aServerAddr, sizeof(aServerAddr), true);
+		if(AnnounceAddr)
+		{
+			char aServerAddr[NETADDR_MAXSTRSIZE];
+			net_addr_str(&ServerAddr, aServerAddr, sizeof(aServerAddr), true);
+			SteamAPI_ISteamFriends_SetRichPresence(m_pSteamFriends, "connect", aServerAddr);
+			SteamAPI_ISteamFriends_SetRichPresence(m_pSteamFriends, "steam_player_group", aServerAddr);
+		}
 
-		SteamAPI_ISteamFriends_SetRichPresence(m_pSteamFriends, "connect", aServerAddr);
 		SteamAPI_ISteamFriends_SetRichPresence(m_pSteamFriends, "map", pMapName);
 		SteamAPI_ISteamFriends_SetRichPresence(m_pSteamFriends, "status", pMapName);
 		SteamAPI_ISteamFriends_SetRichPresence(m_pSteamFriends, "steam_display", "#Status");
-		SteamAPI_ISteamFriends_SetRichPresence(m_pSteamFriends, "steam_player_group", aServerAddr);
 	}
 };
 
 class CSteamStub : public ISteam
 {
-	const char *GetPlayerName() override { return 0; }
-	const NETADDR *GetConnectAddress() override { return 0; }
+	const char *GetPlayerName() override { return nullptr; }
+	const NETADDR *GetConnectAddress() override { return nullptr; }
 	void ClearConnectAddress() override {}
 	void Update() override {}
 	void ClearGameInfo() override {}
-	void SetGameInfo(NETADDR ServerAddr, const char *pMapName) override {}
+	void SetGameInfo(const NETADDR &ServerAddr, const char *pMapName, bool AnnounceAddr) override {}
 };
 
 ISteam *CreateSteam()

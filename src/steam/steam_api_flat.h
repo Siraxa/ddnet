@@ -3,7 +3,7 @@
 
 #include <base/dynamic.h>
 
-#include <stdint.h>
+#include <cstdint>
 
 #ifndef STEAMAPI
 #define STEAMAPI DYNAMIC_IMPORT
@@ -11,7 +11,7 @@
 
 extern "C" {
 
-typedef uint64_t CSteamID;
+typedef uint64_t CSteamId;
 typedef int32_t HSteamPipe;
 typedef int32_t HSteamUser;
 
@@ -29,8 +29,8 @@ struct GameRichPresenceJoinRequested_t
 	{
 		k_iCallback = 337
 	};
-	CSteamID m_steamIDFriend;
-	char m_rgchConnect[256];
+	CSteamId m_steamIdFriend;
+	char m_aRGCHConnect[256];
 };
 
 struct NewUrlLaunchParameters_t

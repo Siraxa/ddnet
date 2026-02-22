@@ -1,9 +1,14 @@
 #include "test.h"
-#include <gtest/gtest.h>
 
+#include <base/fs.h>
 #include <base/logger.h>
-#include <base/system.h>
+#include <base/process.h>
+#include <base/str.h>
+#include <base/system.h> // net_init, CCmdlineFix
+
 #include <engine/storage.h>
+
+#include <gtest/gtest.h>
 
 #include <algorithm>
 
@@ -11,12 +16,32 @@ CTestInfo::CTestInfo()
 {
 	const ::testing::TestInfo *pTestInfo =
 		::testing::UnitTest::GetInstance()->current_test_info();
-	char aBuf[IO_MAX_PATH_LENGTH];
-	str_format(aBuf, sizeof(aBuf), "%s.%s", pTestInfo->test_case_name(), pTestInfo->name());
-	IStorage::FormatTmpPath(m_aFilename, sizeof(m_aFilename), aBuf);
+
+	// Typed tests have test names like "TestName/0" and "TestName/1", which would result in invalid filenames.
+	// Replace the string after the first slash with the name of the typed test and use hyphen instead of slash.
+	char aTestCaseName[128];
+	str_copy(aTestCaseName, pTestInfo->test_case_name());
+	for(int i = 0; i < str_length(aTestCaseName); i++)
+	{
+		if(aTestCaseName[i] == '/')
+		{
+			aTestCaseName[i] = '-';
+			aTestCaseName[i + 1] = '\0';
+			str_append(aTestCaseName, pTestInfo->type_param());
+			break;
+		}
+	}
+	str_format(m_aFilenamePrefix, sizeof(m_aFilenamePrefix), "%s.%s-%d",
+		aTestCaseName, pTestInfo->name(), process_id());
+	Filename(m_aFilename, sizeof(m_aFilename), ".tmp");
 }
 
-IStorage *CTestInfo::CreateTestStorage()
+void CTestInfo::Filename(char *pBuffer, size_t BufferLength, const char *pSuffix)
+{
+	str_format(pBuffer, BufferLength, "%s%s", m_aFilenamePrefix, pSuffix);
+}
+
+std::unique_ptr<IStorage> CTestInfo::CreateTestStorage()
 {
 	bool Error = fs_makedir(m_aFilename);
 	EXPECT_FALSE(Error);
@@ -24,7 +49,10 @@ IStorage *CTestInfo::CreateTestStorage()
 	{
 		return nullptr;
 	}
-	return CreateTempStorage(m_aFilename);
+	char aTestPath[IO_MAX_PATH_LENGTH];
+	str_copy(aTestPath, ::testing::internal::GetArgvs().front().c_str());
+	const char *apArgs[] = {aTestPath};
+	return CreateTempStorage(m_aFilename, std::size(apArgs), apArgs);
 }
 
 class CTestInfoPath
@@ -39,7 +67,7 @@ public:
 		{
 			return m_IsDirectory < Other.m_IsDirectory;
 		}
-		return str_comp(m_aData, Other.m_aData) < 0;
+		return str_comp(m_aData, Other.m_aData) > 0;
 	}
 };
 
@@ -118,12 +146,34 @@ int main(int argc, const char **argv)
 	log_set_global_logger_default();
 	::testing::InitGoogleTest(&argc, const_cast<char **>(argv));
 	net_init();
-	if(secure_random_init())
-	{
-		fprintf(stderr, "random init failed\n");
-		return 1;
-	}
-	int Result = RUN_ALL_TESTS();
-	secure_random_uninit();
-	return Result;
+	return RUN_ALL_TESTS();
+}
+
+TEST(TestInfo, Sort)
+{
+	std::vector<CTestInfoPath> vEntries;
+	vEntries.resize(3);
+
+	const char aBasePath[] = "test_dir";
+	const char aSubPath[] = "test_dir/subdir";
+	const char aFilePath[] = "test_dir/subdir/file.txt";
+
+	vEntries[0].m_IsDirectory = true;
+	str_copy(vEntries[0].m_aData, aBasePath);
+
+	vEntries[1].m_IsDirectory = true;
+	str_copy(vEntries[1].m_aData, aSubPath);
+
+	vEntries[2].m_IsDirectory = false;
+	str_copy(vEntries[2].m_aData, aFilePath);
+
+	// Sorts directories after files.
+	std::sort(vEntries.begin(), vEntries.end());
+
+	EXPECT_FALSE(vEntries[0].m_IsDirectory);
+	EXPECT_EQ(str_comp(vEntries[0].m_aData, aFilePath), 0);
+	EXPECT_TRUE(vEntries[1].m_IsDirectory);
+	EXPECT_EQ(str_comp(vEntries[1].m_aData, aSubPath), 0);
+	EXPECT_TRUE(vEntries[2].m_IsDirectory);
+	EXPECT_EQ(str_comp(vEntries[2].m_aData, aBasePath), 0);
 }

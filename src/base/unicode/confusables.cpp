@@ -1,6 +1,6 @@
 #include "confusables.h"
 
-#include "../system.h"
+#include <base/str.h>
 
 #include <cstddef>
 
@@ -23,7 +23,7 @@ static int str_utf8_skeleton(int ch, const int **skeleton, int *skeleton_len)
 			break;
 		}
 	}
-	*skeleton = NULL;
+	*skeleton = nullptr;
 	*skeleton_len = 1;
 	return 0;
 }
@@ -35,14 +35,14 @@ struct SKELETON
 	const char *str;
 };
 
-void str_utf8_skeleton_begin(struct SKELETON *skel, const char *str)
+static void str_utf8_skeleton_begin(struct SKELETON *skel, const char *str)
 {
-	skel->skeleton = NULL;
+	skel->skeleton = nullptr;
 	skel->skeleton_len = 0;
 	skel->str = str;
 }
 
-int str_utf8_skeleton_next(struct SKELETON *skel)
+static int str_utf8_skeleton_next(struct SKELETON *skel)
 {
 	int ch = 0;
 	while(skel->skeleton_len == 0)
@@ -55,7 +55,7 @@ int str_utf8_skeleton_next(struct SKELETON *skel)
 		str_utf8_skeleton(ch, &skel->skeleton, &skel->skeleton_len);
 	}
 	skel->skeleton_len--;
-	if(skel->skeleton != NULL)
+	if(skel->skeleton != nullptr)
 	{
 		ch = *skel->skeleton;
 		skel->skeleton++;

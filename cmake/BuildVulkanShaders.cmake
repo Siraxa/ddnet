@@ -1,6 +1,7 @@
-find_program(GLSLANG_VALIDATOR_PROGRAM glslangValidator)
-find_program(SPIRV_OPTIMIZER_PROGRAM spirv-opt)
-
+# Find glslangValidator
+find_program(GLSLANG_VALIDATOR_PROGRAM
+  NAMES glslang glslangValidator
+)
 set(GLSLANG_VALIDATOR_PROGRAM_FOUND TRUE)
 if(NOT GLSLANG_VALIDATOR_PROGRAM)
   set(GLSLANG_VALIDATOR_PROGRAM_FOUND FALSE)
@@ -22,10 +23,12 @@ if(NOT GLSLANG_VALIDATOR_PROGRAM)
   endif()
 
   if(NOT GLSLANG_VALIDATOR_PROGRAM_FOUND)
-    message(FATAL_ERROR "glslangValidator binary was not found. Did you install the Vulkan SDK / packages ?")
+    message(FATAL_ERROR "glslangValidator binary was not found. Install the Vulkan SDK / packages. Alternatively, set VULKAN=OFF to build without Vulkan.")
   endif()
 endif()
 
+# Find spirv-opt
+find_program(SPIRV_OPTIMIZER_PROGRAM spirv-opt)
 set(SPIRV_OPTIMIZER_PROGRAM_FOUND TRUE)
 if(NOT SPIRV_OPTIMIZER_PROGRAM)
   set(SPIRV_OPTIMIZER_PROGRAM_FOUND FALSE)
@@ -40,16 +43,23 @@ if(NOT SPIRV_OPTIMIZER_PROGRAM)
   if(EXISTS ${SPIRV_OPTIMIZER_PROGRAM})
     set(SPIRV_OPTIMIZER_PROGRAM_FOUND TRUE)
   endif()
+
+  if(NOT SPIRV_OPTIMIZER_PROGRAM_FOUND)
+    message(FATAL_ERROR "spirv-opt binary was not found. Install the Vulkan SDK / packages. Alternatively, set VULKAN=OFF to build without Vulkan.")
+  endif()
 endif()
 
+# Find Vulkan shader files
 file(GLOB_RECURSE GLSL_SHADER_FILES
-  "data/shaders/vulkan/*.frag"
-  "data/shaders/vulkan/*.vert"
+  "data/shader/vulkan/*.frag"
+  "data/shader/vulkan/*.vert"
 )
+list(SORT GLSL_SHADER_FILES)
 
+# Generate shader SHA256 list to determine changes
 set(TMP_SHADER_SHA256_LIST "")
 foreach(GLSL_SHADER_FILE ${GLSL_SHADER_FILES})
-  file(SHA256 ${FILE_NAME} TMP_FILE_SHA)
+  file(SHA256 ${GLSL_SHADER_FILE} TMP_FILE_SHA)
   set(TMP_SHADER_SHA256_LIST "${TMP_SHADER_SHA256_LIST}${TMP_FILE_SHA}")
 endforeach(GLSL_SHADER_FILE)
 
@@ -58,28 +68,20 @@ set(GLSL_SHADER_SHA256 "${GLSL_SHADER_SHA256}@v1")
 
 set(FOUND_MATCHING_SHA256_FILE FALSE)
 
-if(EXISTS "${PROJECT_BINARY_DIR}/vulkan_shaders_sha256.txt")
-  file(STRINGS "${PROJECT_BINARY_DIR}/vulkan_shaders_sha256.txt" VULKAN_SHADERS_SHA256_FILE_CONTENT)
-  if("${VULKAN_SHADERS_SHA256_FILE_CONTENT}" STREQUAL "${GLSL_SHADER_SHA256}")
-    set(FOUND_MATCHING_SHA256_FILE TRUE)
-  endif()
+if("${VULKAN_SHADER_FILE_SHA256}" STREQUAL "${GLSL_SHADER_SHA256}")
+  set(FOUND_MATCHING_SHA256_FILE TRUE)
 endif()
 
+# Settings
 set(TW_VULKAN_VERSION "vulkan100")
 
 set(GLSLANG_VALIDATOR_COMMAND_LIST)
 set(GLSLANG_VALIDATOR_DELETE_LIST)
 set(SPIRV_OPTIMIZER_COMMAND_LIST)
 function(generate_shader_file FILE_ARGS1 FILE_ARGS2 FILE_NAME FILE_OUTPUT_NAME)
-  set(FILE_TMP_NAME_POSTFIX "")
-  if(SPIRV_OPTIMIZER_PROGRAM_FOUND)
-    set(FILE_TMP_NAME_POSTFIX ".tmp")
-  endif()
-  list(APPEND GLSLANG_VALIDATOR_COMMAND_LIST COMMAND ${GLSLANG_VALIDATOR_PROGRAM} --client ${TW_VULKAN_VERSION} ${FILE_ARGS1} ${FILE_ARGS2} ${FILE_NAME} -o "${PROJECT_BINARY_DIR}/${FILE_OUTPUT_NAME}${FILE_TMP_NAME_POSTFIX}")
-  if(SPIRV_OPTIMIZER_PROGRAM_FOUND)
-    list(APPEND SPIRV_OPTIMIZER_COMMAND_LIST COMMAND ${SPIRV_OPTIMIZER_PROGRAM} -O "${PROJECT_BINARY_DIR}/${FILE_OUTPUT_NAME}${FILE_TMP_NAME_POSTFIX}" -o "${PROJECT_BINARY_DIR}/${FILE_OUTPUT_NAME}")
-    list(APPEND GLSLANG_VALIDATOR_DELETE_LIST "${PROJECT_BINARY_DIR}/${FILE_OUTPUT_NAME}${FILE_TMP_NAME_POSTFIX}")
-  endif()
+  list(APPEND GLSLANG_VALIDATOR_COMMAND_LIST COMMAND ${GLSLANG_VALIDATOR_PROGRAM} --client ${TW_VULKAN_VERSION} ${FILE_ARGS1} ${FILE_ARGS2} ${FILE_NAME} -o "${PROJECT_BINARY_DIR}/${FILE_OUTPUT_NAME}.tmp")
+  list(APPEND SPIRV_OPTIMIZER_COMMAND_LIST COMMAND ${SPIRV_OPTIMIZER_PROGRAM} -O "${PROJECT_BINARY_DIR}/${FILE_OUTPUT_NAME}.tmp" -o "${PROJECT_BINARY_DIR}/${FILE_OUTPUT_NAME}")
+  list(APPEND GLSLANG_VALIDATOR_DELETE_LIST "${PROJECT_BINARY_DIR}/${FILE_OUTPUT_NAME}.tmp")
   file(RELATIVE_PATH TMP_SHADER_FILE_REL "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/${FILE_OUTPUT_NAME}")
   list(APPEND VULKAN_SHADER_FILE_LIST "${FILE_OUTPUT_NAME}")
   set(VULKAN_SHADER_FILE_LIST ${VULKAN_SHADER_FILE_LIST} PARENT_SCOPE)
@@ -88,8 +90,9 @@ function(generate_shader_file FILE_ARGS1 FILE_ARGS2 FILE_NAME FILE_OUTPUT_NAME)
   set(GLSLANG_VALIDATOR_COMMAND_LIST ${GLSLANG_VALIDATOR_COMMAND_LIST} PARENT_SCOPE)
 endfunction()
 
+# Compile shaders if changed
 if(NOT FOUND_MATCHING_SHA256_FILE)
-  message(STATUS "Building vulkan shaders")
+  message(STATUS "Building Vulkan shaders")
   execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${PROJECT_BINARY_DIR}/data/shader/vulkan/")
 
   unset(VULKAN_SHADER_FILE_LIST CACHE)
@@ -137,45 +140,38 @@ if(NOT FOUND_MATCHING_SHA256_FILE)
   generate_shader_file("-DTW_TILE_TEXTURED" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/tile.frag" "data/shader/vulkan/tile_textured.frag.spv")
   generate_shader_file("-DTW_TILE_TEXTURED" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/tile.vert" "data/shader/vulkan/tile_textured.vert.spv")
   
-  generate_shader_file("-DTW_TILE_BORDER" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/tile.frag" "data/shader/vulkan/tile_border.frag.spv")
-  generate_shader_file("-DTW_TILE_BORDER" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/tile.vert" "data/shader/vulkan/tile_border.vert.spv")
+  generate_shader_file("" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/tile_border.frag" "data/shader/vulkan/tile_border.frag.spv")
+  generate_shader_file("" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/tile_border.vert" "data/shader/vulkan/tile_border.vert.spv")
   
-  generate_shader_file("-DTW_TILE_BORDER" "-DTW_TILE_TEXTURED" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/tile.frag" "data/shader/vulkan/tile_border_textured.frag.spv")
-  generate_shader_file("-DTW_TILE_BORDER" "-DTW_TILE_TEXTURED" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/tile.vert" "data/shader/vulkan/tile_border_textured.vert.spv")
-  
-  generate_shader_file("-DTW_TILE_BORDER_LINE" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/tile.frag" "data/shader/vulkan/tile_border_line.frag.spv")
-  generate_shader_file("-DTW_TILE_BORDER_LINE" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/tile.vert" "data/shader/vulkan/tile_border_line.vert.spv")
-  
-  generate_shader_file("-DTW_TILE_BORDER_LINE" "-DTW_TILE_TEXTURED" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/tile.frag" "data/shader/vulkan/tile_border_line_textured.frag.spv")
-  generate_shader_file("-DTW_TILE_BORDER_LINE" "-DTW_TILE_TEXTURED" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/tile.vert" "data/shader/vulkan/tile_border_line_textured.vert.spv")
-  
+  generate_shader_file("" "-DTW_TILE_TEXTURED" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/tile_border.frag" "data/shader/vulkan/tile_border_textured.frag.spv")
+  generate_shader_file("" "-DTW_TILE_TEXTURED" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/tile_border.vert" "data/shader/vulkan/tile_border_textured.vert.spv")
+
   # quad layer
   generate_shader_file("" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/quad.frag" "data/shader/vulkan/quad.frag.spv")
   generate_shader_file("" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/quad.vert" "data/shader/vulkan/quad.vert.spv")
   
-  generate_shader_file("-DTW_PUSH_CONST" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/quad.frag" "data/shader/vulkan/quad_push.frag.spv")
-  generate_shader_file("-DTW_PUSH_CONST" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/quad.vert" "data/shader/vulkan/quad_push.vert.spv")
+  generate_shader_file("-DTW_QUAD_GROUPED" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/quad.frag" "data/shader/vulkan/quad_grouped.frag.spv")
+  generate_shader_file("-DTW_QUAD_GROUPED" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/quad.vert" "data/shader/vulkan/quad_grouped.vert.spv")
   
   generate_shader_file("-DTW_QUAD_TEXTURED" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/quad.frag" "data/shader/vulkan/quad_textured.frag.spv")
   generate_shader_file("-DTW_QUAD_TEXTURED" "" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/quad.vert" "data/shader/vulkan/quad_textured.vert.spv")
   
-  generate_shader_file("-DTW_QUAD_TEXTURED" "-DTW_PUSH_CONST" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/quad.frag" "data/shader/vulkan/quad_push_textured.frag.spv")
-  generate_shader_file("-DTW_QUAD_TEXTURED" "-DTW_PUSH_CONST" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/quad.vert" "data/shader/vulkan/quad_push_textured.vert.spv")
+  generate_shader_file("-DTW_QUAD_TEXTURED" "-DTW_QUAD_GROUPED" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/quad.frag" "data/shader/vulkan/quad_grouped_textured.frag.spv")
+  generate_shader_file("-DTW_QUAD_TEXTURED" "-DTW_QUAD_GROUPED" "${PROJECT_SOURCE_DIR}/data/shader/vulkan/quad.vert" "data/shader/vulkan/quad_grouped_textured.vert.spv")
 
   execute_process(${GLSLANG_VALIDATOR_COMMAND_LIST} RESULT_VARIABLE STATUS)
   if(STATUS AND NOT STATUS EQUAL 0)
     message(FATAL_ERROR "${GLSLANG_VALIDATOR_COMMAND_LIST} failed")
   endif()
-  if(SPIRV_OPTIMIZER_PROGRAM_FOUND)
-    execute_process(${SPIRV_OPTIMIZER_COMMAND_LIST} RESULT_VARIABLE STATUS)
-    if(STATUS AND NOT STATUS EQUAL 0)
-      message(FATAL_ERROR "${SPIRV_OPTIMIZER_COMMAND_LIST} failed")
-    endif()
-    file(REMOVE ${GLSLANG_VALIDATOR_DELETE_LIST})
+
+  execute_process(${SPIRV_OPTIMIZER_COMMAND_LIST} RESULT_VARIABLE STATUS)
+  if(STATUS AND NOT STATUS EQUAL 0)
+    message(FATAL_ERROR "${SPIRV_OPTIMIZER_COMMAND_LIST} failed")
   endif()
 
-  set(VULKAN_SHADER_FILE_LIST ${VULKAN_SHADER_FILE_LIST} CACHE STRING "Vulkan shader file list" FORCE)
+  file(REMOVE ${GLSLANG_VALIDATOR_DELETE_LIST})
 
-  message(STATUS "Finished building vulkan shaders")
-  file(WRITE "${PROJECT_BINARY_DIR}/vulkan_shaders_sha256.txt" "${GLSL_SHADER_SHA256}")
+  set(VULKAN_SHADER_FILE_LIST ${VULKAN_SHADER_FILE_LIST} CACHE STRING "Vulkan shader file list" FORCE)
+  set(VULKAN_SHADER_FILE_SHA256 ${GLSL_SHADER_SHA256} CACHE STRING "Vulkan shader file hash" FORCE)
+  message(STATUS "Finished building Vulkan shaders")
 endif()

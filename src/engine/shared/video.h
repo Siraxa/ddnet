@@ -3,14 +3,16 @@
 
 #include <base/system.h>
 
-typedef void (*ISoundMixFunc)(short *pFinalOut, unsigned Frames);
+#include <functional>
+
+typedef std::function<void(short *pFinalOut, unsigned Frames)> ISoundMixFunc;
 
 class IVideo
 {
 public:
-	virtual ~IVideo(){};
+	virtual ~IVideo() = default;
 
-	virtual void Start() = 0;
+	virtual bool Start() = 0;
 	virtual void Stop() = 0;
 	virtual void Pause(bool Pause) = 0;
 	virtual bool IsRecording() = 0;
@@ -18,7 +20,7 @@ public:
 	virtual void NextVideoFrame() = 0;
 	virtual void NextVideoFrameThread() = 0;
 
-	virtual void NextAudioFrame(void (*Mix)(short *pFinalOut, unsigned Frames)) = 0;
+	virtual void NextAudioFrame(ISoundMixFunc Mix) = 0;
 	virtual void NextAudioFrameTimeline(ISoundMixFunc Mix) = 0;
 
 	static IVideo *Current() { return ms_pCurrentVideo; }

@@ -1,11 +1,42 @@
 #include "authmanager.h"
+
 #include <base/hash_ctxt.h>
+#include <base/system.h>
+
 #include <engine/shared/config.h>
-#include <game/generated/protocol.h>
+
+#include <generated/protocol.h>
 
 #define ADMIN_IDENT "default_admin"
 #define MOD_IDENT "default_mod"
 #define HELPER_IDENT "default_helper"
+
+const char *CAuthManager::AuthLevelToRoleName(int AuthLevel)
+{
+	switch(AuthLevel)
+	{
+	case AUTHED_ADMIN:
+		return RoleName::ADMIN;
+	case AUTHED_MOD:
+		return RoleName::MODERATOR;
+	case AUTHED_HELPER:
+		return RoleName::HELPER;
+	}
+
+	dbg_assert_failed("Invalid auth level: %d", AuthLevel);
+}
+
+static int RoleNameToAuthLevel(const char *pRoleName)
+{
+	if(!str_comp(pRoleName, RoleName::ADMIN))
+		return AUTHED_ADMIN;
+	if(!str_comp(pRoleName, RoleName::MODERATOR))
+		return AUTHED_MOD;
+	if(!str_comp(pRoleName, RoleName::HELPER))
+		return AUTHED_HELPER;
+
+	dbg_assert_failed("Invalid role name: %s", pRoleName);
+}
 
 static MD5_DIGEST HashPassword(const char *pPassword, const unsigned char aSalt[SALT_BYTES])
 {
@@ -23,6 +54,10 @@ CAuthManager::CAuthManager()
 	m_aDefault[1] = -1;
 	m_aDefault[2] = -1;
 	m_Generated = false;
+
+	AddRole(RoleName::ADMIN, RoleRank::ADMIN);
+	AddRole(RoleName::MODERATOR, RoleRank::MODERATOR);
+	AddRole(RoleName::HELPER, RoleRank::HELPER);
 }
 
 void CAuthManager::Init()
@@ -34,52 +69,58 @@ void CAuthManager::Init()
 		NumDefaultKeys++;
 	if(g_Config.m_SvRconHelperPassword[0])
 		NumDefaultKeys++;
+
+	auto It = std::find_if(m_vKeys.begin(), m_vKeys.end(), [](CKey Key) { return str_comp(Key.m_aIdent, DEFAULT_SAVED_RCON_USER) == 0; });
+	if(It != m_vKeys.end())
+		NumDefaultKeys++;
+
 	if(m_vKeys.size() == NumDefaultKeys && !g_Config.m_SvRconPassword[0])
 	{
 		secure_random_password(g_Config.m_SvRconPassword, sizeof(g_Config.m_SvRconPassword), 6);
-		AddDefaultKey(AUTHED_ADMIN, g_Config.m_SvRconPassword);
+		AddDefaultKey(RoleName::ADMIN, g_Config.m_SvRconPassword);
 		m_Generated = true;
 	}
 }
 
-int CAuthManager::AddKeyHash(const char *pIdent, MD5_DIGEST Hash, const unsigned char *pSalt, int AuthLevel)
+int CAuthManager::AddKeyHash(const char *pIdent, MD5_DIGEST Hash, const unsigned char *pSalt, const char *pRoleName)
 {
 	if(FindKey(pIdent) >= 0)
 		return -1;
 
 	CKey Key;
-	str_copy(Key.m_aIdent, pIdent, sizeof(Key.m_aIdent));
+	str_copy(Key.m_aIdent, pIdent);
 	Key.m_Pw = Hash;
 	mem_copy(Key.m_aSalt, pSalt, SALT_BYTES);
-	Key.m_Level = AuthLevel;
+	Key.m_pRole = FindRole(pRoleName);
+	dbg_assert(Key.m_pRole != nullptr, "Invalid role name '%s'.", pRoleName);
 
 	m_vKeys.push_back(Key);
 	return m_vKeys.size() - 1;
 }
 
-int CAuthManager::AddKey(const char *pIdent, const char *pPw, int AuthLevel)
+int CAuthManager::AddKey(const char *pIdent, const char *pPw, const char *pRoleName)
 {
 	// Generate random salt
 	unsigned char aSalt[SALT_BYTES];
 	secure_random_fill(aSalt, SALT_BYTES);
-	return AddKeyHash(pIdent, HashPassword(pPw, aSalt), aSalt, AuthLevel);
+	return AddKeyHash(pIdent, HashPassword(pPw, aSalt), aSalt, pRoleName);
 }
 
-int CAuthManager::RemoveKey(int Slot)
+void CAuthManager::RemoveKey(int Slot)
 {
 	m_vKeys.erase(m_vKeys.begin() + Slot);
+	// Update indices of default keys
 	for(int &Default : m_aDefault)
 	{
 		if(Default == Slot)
 		{
 			Default = -1;
 		}
-		else if(Default == (int)m_vKeys.size())
+		else if(Default > Slot)
 		{
-			Default = Slot;
+			--Default;
 		}
 	}
-	return m_vKeys.size();
 }
 
 int CAuthManager::FindKey(const char *pIdent) const
@@ -98,28 +139,42 @@ bool CAuthManager::CheckKey(int Slot, const char *pPw) const
 	return m_vKeys[Slot].m_Pw == HashPassword(pPw, m_vKeys[Slot].m_aSalt);
 }
 
-int CAuthManager::DefaultKey(int AuthLevel) const
+int CAuthManager::DefaultIndex(int AuthLevel) const
 {
-	if(AuthLevel < 0 || AuthLevel > AUTHED_ADMIN)
-		return 0;
-	return m_aDefault[AUTHED_ADMIN - AuthLevel];
+	return std::size(m_aDefault) - AuthLevel;
+}
+
+int CAuthManager::DefaultKey(const char *pRoleName) const
+{
+	if(!str_comp(pRoleName, RoleName::ADMIN))
+		return m_aDefault[DefaultIndex(AUTHED_ADMIN)];
+	if(!str_comp(pRoleName, RoleName::MODERATOR))
+		return m_aDefault[DefaultIndex(AUTHED_MOD)];
+	if(!str_comp(pRoleName, RoleName::HELPER))
+		return m_aDefault[DefaultIndex(AUTHED_HELPER)];
+	return 0;
 }
 
 int CAuthManager::KeyLevel(int Slot) const
 {
 	if(Slot < 0 || Slot >= (int)m_vKeys.size())
 		return false;
-	return m_vKeys[Slot].m_Level;
+	return m_vKeys[Slot].m_pRole->Rank();
 }
 
 const char *CAuthManager::KeyIdent(int Slot) const
 {
 	if(Slot < 0 || Slot >= (int)m_vKeys.size())
-		return NULL;
+		return nullptr;
 	return m_vKeys[Slot].m_aIdent;
 }
 
-void CAuthManager::UpdateKeyHash(int Slot, MD5_DIGEST Hash, const unsigned char *pSalt, int AuthLevel)
+bool CAuthManager::IsValidIdent(const char *pIdent) const
+{
+	return str_length(pIdent) < (int)sizeof(CKey().m_aIdent);
+}
+
+void CAuthManager::UpdateKeyHash(int Slot, MD5_DIGEST Hash, const unsigned char *pSalt, const char *pRoleName)
 {
 	if(Slot < 0 || Slot >= (int)m_vKeys.size())
 		return;
@@ -127,10 +182,10 @@ void CAuthManager::UpdateKeyHash(int Slot, MD5_DIGEST Hash, const unsigned char 
 	CKey *pKey = &m_vKeys[Slot];
 	pKey->m_Pw = Hash;
 	mem_copy(pKey->m_aSalt, pSalt, SALT_BYTES);
-	pKey->m_Level = AuthLevel;
+	pKey->m_pRole = FindRole(pRoleName);
 }
 
-void CAuthManager::UpdateKey(int Slot, const char *pPw, int AuthLevel)
+void CAuthManager::UpdateKey(int Slot, const char *pPw, const char *pRoleName)
 {
 	if(Slot < 0 || Slot >= (int)m_vKeys.size())
 		return;
@@ -138,25 +193,25 @@ void CAuthManager::UpdateKey(int Slot, const char *pPw, int AuthLevel)
 	// Generate random salt
 	unsigned char aSalt[SALT_BYTES];
 	secure_random_fill(aSalt, SALT_BYTES);
-	UpdateKeyHash(Slot, HashPassword(pPw, aSalt), aSalt, AuthLevel);
+	UpdateKeyHash(Slot, HashPassword(pPw, aSalt), aSalt, pRoleName);
 }
 
 void CAuthManager::ListKeys(FListCallback pfnListCallback, void *pUser)
 {
 	for(auto &Key : m_vKeys)
-		pfnListCallback(Key.m_aIdent, Key.m_Level, pUser);
+		pfnListCallback(Key.m_aIdent, Key.m_pRole->Name(), pUser);
 }
 
-void CAuthManager::AddDefaultKey(int Level, const char *pPw)
+void CAuthManager::AddDefaultKey(const char *pRoleName, const char *pPw)
 {
-	if(Level < AUTHED_HELPER || Level > AUTHED_ADMIN)
-		return;
+	int Level = RoleNameToAuthLevel(pRoleName);
+	dbg_assert(AUTHED_HELPER <= Level && Level <= AUTHED_ADMIN, "default role with name '%s' not found.", pRoleName);
 
-	static const char IDENTS[3][sizeof(HELPER_IDENT)] = {ADMIN_IDENT, MOD_IDENT, HELPER_IDENT};
+	static const char s_aaIdents[3][sizeof(HELPER_IDENT)] = {ADMIN_IDENT, MOD_IDENT, HELPER_IDENT};
 	int Index = AUTHED_ADMIN - Level;
 	if(m_aDefault[Index] >= 0)
 		return; // already exists
-	m_aDefault[Index] = AddKey(IDENTS[Index], pPw, Level);
+	m_aDefault[Index] = AddKey(s_aaIdents[Index], pPw, AuthLevelToRoleName(Level));
 }
 
 bool CAuthManager::IsGenerated() const
@@ -166,6 +221,25 @@ bool CAuthManager::IsGenerated() const
 
 int CAuthManager::NumNonDefaultKeys() const
 {
-	int DefaultCount = (m_aDefault[0] >= 0) + (m_aDefault[1] >= 0) + (m_aDefault[2] >= 0);
+	int DefaultCount = std::count_if(std::begin(m_aDefault), std::end(m_aDefault), [](int Slot) {
+		return Slot >= 0;
+	});
 	return m_vKeys.size() - DefaultCount;
+}
+
+CRconRole *CAuthManager::FindRole(const char *pName)
+{
+	auto It = m_Roles.find(pName);
+	if(It == m_Roles.end())
+		return nullptr;
+	return &It->second;
+}
+
+bool CAuthManager::AddRole(const char *pName, int Rank)
+{
+	if(FindRole(pName))
+		return false;
+
+	m_Roles.insert({pName, CRconRole(pName, Rank)});
+	return true;
 }

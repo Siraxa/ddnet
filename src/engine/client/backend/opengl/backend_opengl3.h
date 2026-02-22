@@ -1,5 +1,5 @@
 // This file can be included several times.
-#if(!defined(BACKEND_AS_OPENGL_ES) && !defined(ENGINE_CLIENT_BACKEND_OPENGL_BACKEND_OPENGL3_H)) || \
+#if (!defined(BACKEND_AS_OPENGL_ES) && !defined(ENGINE_CLIENT_BACKEND_OPENGL_BACKEND_OPENGL3_H)) || \
 	(defined(BACKEND_AS_OPENGL_ES) && !defined(ENGINE_CLIENT_BACKEND_OPENGL_BACKEND_OPENGL3_H_AS_ES))
 
 #if !defined(BACKEND_AS_OPENGL_ES) && !defined(ENGINE_CLIENT_BACKEND_OPENGL_BACKEND_OPENGL3_H)
@@ -12,25 +12,26 @@
 
 #include "backend_opengl.h"
 
+class CGLSLPrimitiveExProgram;
+class CGLSLQuadProgram;
+class CGLSLSpriteMultipleProgram;
+class CGLSLTextProgram;
+
 #define MAX_STREAM_BUFFER_COUNT 10
 
 // takes care of opengl 3.3+ related rendering
 class CCommandProcessorFragment_OpenGL3_3 : public CCommandProcessorFragment_OpenGL3
 {
 protected:
-	bool m_UsePreinitializedVertexBuffer;
-
 	int m_MaxQuadsAtOnce;
-	static const int m_MaxQuadsPossible = 256;
+	static const int ms_MaxQuadsPossible = 256;
 
 	CGLSLPrimitiveProgram *m_pPrimitiveProgram;
 	CGLSLPrimitiveProgram *m_pPrimitiveProgramTextured;
-	CGLSLTileProgram *m_pBorderTileProgram;
-	CGLSLTileProgram *m_pBorderTileProgramTextured;
-	CGLSLTileProgram *m_pBorderTileLineProgram;
-	CGLSLTileProgram *m_pBorderTileLineProgramTextured;
 	CGLSLQuadProgram *m_pQuadProgram;
 	CGLSLQuadProgram *m_pQuadProgramTextured;
+	CGLSLQuadProgram *m_pQuadProgramGrouped;
+	CGLSLQuadProgram *m_pQuadProgramTexturedGrouped;
 	CGLSLTextProgram *m_pTextProgram;
 	CGLSLPrimitiveExProgram *m_pPrimitiveExProgram;
 	CGLSLPrimitiveExProgram *m_pPrimitiveExProgramTextured;
@@ -38,18 +39,18 @@ protected:
 	CGLSLPrimitiveExProgram *m_pPrimitiveExProgramTexturedRotationless;
 	CGLSLSpriteMultipleProgram *m_pSpriteProgramMultiple;
 
-	TWGLuint m_LastProgramID;
+	TWGLuint m_LastProgramId;
 
-	TWGLuint m_PrimitiveDrawVertexID[MAX_STREAM_BUFFER_COUNT];
-	TWGLuint m_PrimitiveDrawVertexIDTex3D;
-	TWGLuint m_PrimitiveDrawBufferID[MAX_STREAM_BUFFER_COUNT];
-	TWGLuint m_PrimitiveDrawBufferIDTex3D;
+	TWGLuint m_aPrimitiveDrawVertexId[MAX_STREAM_BUFFER_COUNT];
+	TWGLuint m_PrimitiveDrawVertexIdTex3D;
+	TWGLuint m_aPrimitiveDrawBufferId[MAX_STREAM_BUFFER_COUNT];
+	TWGLuint m_PrimitiveDrawBufferIdTex3D;
 
-	TWGLuint m_LastIndexBufferBound[MAX_STREAM_BUFFER_COUNT];
+	TWGLuint m_aLastIndexBufferBound[MAX_STREAM_BUFFER_COUNT];
 
 	int m_LastStreamBuffer;
 
-	TWGLuint m_QuadDrawIndexBufferID;
+	TWGLuint m_QuadDrawIndexBufferId;
 	unsigned int m_CurrentIndicesInBuffer;
 
 	void DestroyBufferContainer(int Index, bool DeleteBOs = true);
@@ -59,8 +60,8 @@ protected:
 	struct SBufferContainer
 	{
 		SBufferContainer() :
-			m_VertArrayID(0), m_LastIndexBufferBound(0) {}
-		TWGLuint m_VertArrayID;
+			m_VertArrayId(0), m_LastIndexBufferBound(0) {}
+		TWGLuint m_VertArrayId;
 		TWGLuint m_LastIndexBufferBound;
 		SBufferContainerInfo m_ContainerInfo;
 	};
@@ -72,19 +73,17 @@ protected:
 
 	void InitPrimExProgram(CGLSLPrimitiveExProgram *pProgram, class CGLSLCompiler *pCompiler, class IStorage *pStorage, bool Textured, bool Rotationless);
 
-	static int TexFormatToNewOpenGLFormat(int TexFormat);
 	bool IsNewApi() override { return true; }
 
 	void UseProgram(CGLSLTWProgram *pProgram);
-	void UploadStreamBufferData(unsigned int PrimitiveType, const void *pVertices, size_t VertSize, unsigned int PrimitiveCount, bool AsTex3D = false);
-	void RenderText(const CCommandBuffer::SState &State, int DrawNum, int TextTextureIndex, int TextOutlineTextureIndex, int TextureSize, const float *pTextColor, const float *pTextOutlineColor);
+	void UploadStreamBufferData(EPrimitiveType PrimitiveType, const void *pVertices, size_t VertSize, unsigned int PrimitiveCount, bool AsTex3D = false);
+	void RenderText(const CCommandBuffer::SState &State, int DrawNum, int TextTextureIndex, int TextOutlineTextureIndex, int TextureSize, const ColorRGBA &TextColor, const ColorRGBA &TextOutlineColor);
 
-	void TextureUpdate(int Slot, int X, int Y, int Width, int Height, int GLFormat, void *pTexData);
-	void TextureCreate(int Slot, int Width, int Height, int PixelSize, int GLFormat, int GLStoreFormat, int Flags, void *pTexData);
+	void TextureUpdate(int Slot, int X, int Y, int Width, int Height, int GLFormat, uint8_t *pTexData);
+	void TextureCreate(int Slot, int Width, int Height, int GLFormat, int GLStoreFormat, int Flags, uint8_t *pTexData);
 
 	bool Cmd_Init(const SCommand_Init *pCommand) override;
 	void Cmd_Shutdown(const SCommand_Shutdown *pCommand) override;
-	void Cmd_Texture_Update(const CCommandBuffer::SCommand_Texture_Update *pCommand) override;
 	void Cmd_Texture_Destroy(const CCommandBuffer::SCommand_Texture_Destroy *pCommand) override;
 	void Cmd_Texture_Create(const CCommandBuffer::SCommand_Texture_Create *pCommand) override;
 	void Cmd_TextTexture_Update(const CCommandBuffer::SCommand_TextTexture_Update *pCommand) override;
@@ -107,8 +106,7 @@ protected:
 
 	void Cmd_RenderTileLayer(const CCommandBuffer::SCommand_RenderTileLayer *pCommand) override;
 	void Cmd_RenderBorderTile(const CCommandBuffer::SCommand_RenderBorderTile *pCommand) override;
-	void Cmd_RenderBorderTileLine(const CCommandBuffer::SCommand_RenderBorderTileLine *pCommand) override;
-	void Cmd_RenderQuadLayer(const CCommandBuffer::SCommand_RenderQuadLayer *pCommand) override;
+	void Cmd_RenderQuadLayer(const CCommandBuffer::SCommand_RenderQuadLayer *pCommand, bool Grouped) override;
 	void Cmd_RenderText(const CCommandBuffer::SCommand_RenderText *pCommand) override;
 	void Cmd_RenderQuadContainer(const CCommandBuffer::SCommand_RenderQuadContainer *pCommand) override;
 	void Cmd_RenderQuadContainerEx(const CCommandBuffer::SCommand_RenderQuadContainerEx *pCommand) override;

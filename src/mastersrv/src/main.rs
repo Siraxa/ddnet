@@ -1,3 +1,4 @@
+use arc_swap::ArcSwap;
 use arrayvec::ArrayString;
 use arrayvec::ArrayVec;
 use clap::value_t_or_exit;
@@ -37,6 +38,7 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::time;
 use warp::Filter;
+use warp::http::StatusCode;
 
 #[macro_use]
 extern crate log;
@@ -44,12 +46,16 @@ extern crate log;
 use crate::addr::Addr;
 use crate::addr::Protocol;
 use crate::addr::RegisterAddr;
+use crate::config::Config;
+use crate::config::ConfigLocation;
 use crate::locations::Location;
 use crate::locations::Locations;
 
 // Naming convention: Always use the abbreviation `addr` except in user-facing
 // (e.g. serialized) identifiers.
 mod addr;
+mod community_token;
+mod config;
 mod locations;
 
 const SERVER_TIMEOUT_SECONDS: u64 = 30;
@@ -63,6 +69,7 @@ struct Register {
     connless_request_token: Option<ShortString>,
     challenge_secret: ShortString,
     challenge_token: Option<ShortString>,
+    community_token: Option<ShortString>,
     info_serial: i64,
     info: Option<json::Value>,
 }
@@ -85,37 +92,42 @@ enum RegisterResponse {
 #[derive(Debug, Serialize)]
 struct RegisterError {
     #[serde(skip)]
-    is_unsupported_media_type: bool,
+    status: StatusCode,
     message: Cow<'static, str>,
 }
 
 impl RegisterError {
     fn new(s: String) -> RegisterError {
         RegisterError {
-            is_unsupported_media_type: false,
+            status: StatusCode::BAD_REQUEST,
             message: Cow::Owned(s),
+        }
+    }
+    fn banned(reason: Option<&str>) -> RegisterError {
+        RegisterError {
+            status: StatusCode::FORBIDDEN,
+            message: if let Some(reason) = reason {
+                Cow::Owned(format!("banned: {reason}"))
+            } else {
+                Cow::Borrowed("banned")
+            },
         }
     }
     fn unsupported_media_type() -> RegisterError {
         RegisterError {
-            is_unsupported_media_type: true,
+            status: StatusCode::UNSUPPORTED_MEDIA_TYPE,
             message: Cow::Borrowed("The request's Content-Type is not supported"),
         }
     }
-    fn status(&self) -> warp::http::StatusCode {
-        use warp::http::StatusCode;
-        if !self.is_unsupported_media_type {
-            StatusCode::BAD_REQUEST
-        } else {
-            StatusCode::UNSUPPORTED_MEDIA_TYPE
-        }
+    fn status(&self) -> StatusCode {
+        self.status
     }
 }
 
 impl From<&'static str> for RegisterError {
     fn from(s: &'static str) -> RegisterError {
         RegisterError {
-            is_unsupported_media_type: false,
+            status: StatusCode::BAD_REQUEST,
             message: Cow::Borrowed(s),
         }
     }
@@ -162,12 +174,15 @@ impl Timekeeper {
 
 #[derive(Debug, Serialize)]
 struct SerializedServers<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub communities: Option<&'a json::value::RawValue>,
     pub servers: Vec<SerializedServer<'a>>,
 }
 
 impl<'a> SerializedServers<'a> {
-    fn new() -> SerializedServers<'a> {
+    fn new(communities: Option<&'a json::value::RawValue>) -> SerializedServers<'a> {
         SerializedServers {
+            communities,
             servers: Vec::new(),
         }
     }
@@ -177,6 +192,8 @@ impl<'a> SerializedServers<'a> {
 struct SerializedServer<'a> {
     pub addresses: &'a [Addr],
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub community: Option<ShortString>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub location: Option<Location>,
     pub info: &'a json::value::RawValue,
 }
@@ -185,6 +202,7 @@ impl<'a> SerializedServer<'a> {
     fn new(server: &'a Server, location: Option<Location>) -> SerializedServer<'a> {
         SerializedServer {
             addresses: &server.addresses,
+            community: server.community,
             location,
             info: &server.info,
         }
@@ -195,6 +213,8 @@ impl<'a> SerializedServer<'a> {
 struct DumpServer<'a> {
     pub info_serial: i64,
     pub info: Cow<'a, json::value::RawValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub community: Option<ShortString>,
 }
 
 impl<'a> From<&'a Server> for DumpServer<'a> {
@@ -202,6 +222,7 @@ impl<'a> From<&'a Server> for DumpServer<'a> {
         DumpServer {
             info_serial: server.info_serial,
             info: Cow::Borrowed(&server.info),
+            community: server.community,
         }
     }
 }
@@ -306,7 +327,7 @@ impl Challenger {
 
 struct Shared<'a> {
     challenger: &'a Mutex<Challenger>,
-    locations: &'a Locations,
+    config: &'a Config,
     servers: &'a Mutex<Servers>,
     socket: &'a Arc<tokio::net::UdpSocket>,
     timekeeper: Timekeeper,
@@ -329,7 +350,7 @@ impl<'a> Shared<'a> {
 /// Maintains a mapping from server addresses to server info.
 ///
 /// Also maintains a mapping from addresses to corresponding server addresses.
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone)]
 struct Servers {
     pub addresses: HashMap<Addr, AddrInfo>,
     pub servers: HashMap<ShortString, Server>,
@@ -362,6 +383,7 @@ impl Servers {
         a_info: AddrInfo,
         info_serial: i64,
         info: Option<Cow<'_, json::value::RawValue>>,
+        community: Option<&ShortString>,
     ) -> AddResult {
         let need_info = self
             .servers
@@ -405,10 +427,11 @@ impl Servers {
                     addresses: vec![addr],
                     info_serial,
                     info: info.unwrap().into_owned(),
+                    community: community.cloned(),
                 });
             }
             hash_map::Entry::Occupied(mut o) => {
-                let mut server = &mut o.get_mut();
+                let server = &mut o.get_mut();
                 if insert_addr {
                     server.addresses.push(addr);
                     server.addresses.sort_unstable();
@@ -416,6 +439,7 @@ impl Servers {
                 if info_serial > server.info_serial {
                     server.info_serial = info_serial;
                     server.info = info.unwrap().into_owned();
+                    server.community = community.cloned();
                 }
             }
         }
@@ -465,6 +489,7 @@ impl Servers {
                 a_info.clone(),
                 server.info_serial,
                 Some(Cow::Borrowed(&server.info)),
+                server.community.as_ref(),
             );
         }
     }
@@ -481,6 +506,7 @@ impl Servers {
                             addresses: vec![],
                             info_serial: server.info_serial,
                             info: server.info.into_owned(),
+                            community: server.community,
                         },
                     )
                 })
@@ -506,11 +532,12 @@ impl Servers {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug)]
 struct Server {
     pub addresses: Vec<Addr>,
     pub info_serial: i64,
     pub info: Box<json::value::RawValue>,
+    pub community: Option<ShortString>,
 }
 
 async fn handle_periodic_reseed(challenger: Arc<Mutex<Challenger>>) {
@@ -558,7 +585,46 @@ async fn overwrite_atomically(
     Ok(())
 }
 
+fn servers_json(config: &Config, now: Timestamp, mut servers: Servers) -> String {
+    let mut serialized = SerializedServers::new(config.communities.as_deref());
+    servers.prune_before(now.minus_seconds(SERVER_TIMEOUT_SECONDS), false);
+    serialized.servers.extend(servers.servers.values().map(|s| {
+        // Get the location of the first registered address. Since
+        // the addresses are kept sorted, this is stable.
+        let location = s
+            .addresses
+            .iter()
+            .filter_map(|addr| servers.addresses[addr].location)
+            .next();
+        SerializedServer::new(s, location)
+    }));
+    serialized.servers.sort_by_key(|s| s.addresses);
+    json::to_string(&serialized).unwrap() + "\n"
+}
+
+async fn handle_test_servers_json(
+    config: Arc<Config>,
+    servers: Arc<Mutex<Servers>>,
+    dumps_dir: Option<String>,
+    timekeeper: Timekeeper,
+) -> String {
+    let now = timekeeper.now();
+    let mut servers = servers
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .clone();
+    let other_dumps = match &dumps_dir {
+        Some(dir) => read_dump_dir(Path::new(dir), timekeeper).await,
+        None => Vec::new(),
+    };
+    for other_dump in &other_dumps {
+        servers.merge(other_dump);
+    }
+    servers_json(&config, now, servers)
+}
+
 async fn handle_periodic_writeout(
+    config: Arc<ArcSwap<Config>>,
     servers: Arc<Mutex<Servers>>,
     dumps_dir: Option<String>,
     dump_filename: Option<String>,
@@ -581,13 +647,14 @@ async fn handle_periodic_writeout(
 
     loop {
         let now = timekeeper.now();
+        let config = config.load();
         let mut servers = {
             let mut servers = servers.lock().unwrap_or_else(|poison| poison.into_inner());
             servers.prune_before(now.minus_seconds(SERVER_TIMEOUT_SECONDS), true);
             servers.clone()
         };
         if let Some((filename, filename_temp)) = &dump_filename {
-            let json = json::to_string(&Dump::new(now, &servers)).unwrap();
+            let json = json::to_string(&Dump::new(now, &servers)).unwrap() + "\n";
             overwrite_atomically(filename, filename_temp, json.as_bytes())
                 .await
                 .unwrap();
@@ -614,7 +681,7 @@ async fn handle_periodic_writeout(
                 }
                 non_backcompat_addrs.sort_unstable();
                 non_backcompat_addrs.dedup();
-                let json = json::to_string(&non_backcompat_addrs).unwrap();
+                let json = json::to_string(&non_backcompat_addrs).unwrap() + "\n";
                 overwrite_atomically(filename, filename_temp, json.as_bytes())
                     .await
                     .unwrap();
@@ -623,22 +690,7 @@ async fn handle_periodic_writeout(
                 servers.merge(other_dump);
             }
             drop(other_dumps);
-            let json = {
-                let mut serialized = SerializedServers::new();
-                servers.prune_before(now.minus_seconds(SERVER_TIMEOUT_SECONDS), false);
-                serialized.servers.extend(servers.servers.values().map(|s| {
-                    // Get the location of the first registered address. Since
-                    // the addresses are kept sorted, this is stable.
-                    let location = s
-                        .addresses
-                        .iter()
-                        .filter_map(|addr| servers.addresses[addr].location)
-                        .next();
-                    SerializedServer::new(s, location)
-                }));
-                serialized.servers.sort_by_key(|s| s.addresses);
-                json::to_string(&serialized).unwrap()
-            };
+            let json = servers_json(&config, now, servers);
             overwrite_atomically(&servers_filename, servers_filename_temp, json.as_bytes())
                 .await
                 .unwrap();
@@ -650,6 +702,39 @@ async fn handle_periodic_writeout(
             iteration += 1;
         } else {
             iteration = elapsed.as_secs();
+        }
+    }
+}
+
+async fn handle_config_reread(config_location: ConfigLocation, config: Arc<ArcSwap<Config>>) {
+    #[cfg(not(unix))]
+    {
+        use std::future;
+
+        // Do nothing. Config rereading isn't implemented on non-Unix OSs.
+        future::pending().await
+    }
+
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::signal;
+        use tokio::signal::unix::SignalKind;
+
+        let mut sighup = signal(SignalKind::hangup()).unwrap();
+        loop {
+            sighup.recv().await.unwrap();
+
+            // This is theoretically blocking, but it should™ be fine.
+            match config_location.read() {
+                Err(e) => {
+                    error!("error re-reading config: {}", e);
+                    continue;
+                }
+                Ok(new_config) => {
+                    config.store(Arc::new(new_config));
+                    info!("successfully reloaded config");
+                }
+            }
         }
     }
 }
@@ -698,18 +783,34 @@ fn handle_register(
     };
 
     let addr = register.address.with_ip(remote_addr);
-    let challenge = shared.challenge_for_addr(&addr);
 
-    let correct_challenge = register
-        .challenge_token
-        .as_ref()
-        .map(|ct| challenge.is_valid(ct))
-        .unwrap_or(false);
-    let should_send_challenge = register
-        .challenge_token
-        .as_ref()
-        .map(|ct| ct != challenge.current())
-        .unwrap_or(true);
+    if let Some(reason) = shared.config.is_banned(addr) {
+        return Err(RegisterError::banned(reason));
+    }
+
+    let is_exempt = shared.config.is_exempt_from_port_forward_check(addr);
+    let challenge = shared.challenge_for_addr(&addr);
+    let correct_challenge = is_exempt
+        || register
+            .challenge_token
+            .as_ref()
+            .map(|ct| challenge.is_valid(ct))
+            .unwrap_or(false);
+    let should_send_challenge = !is_exempt
+        && register
+            .challenge_token
+            .as_ref()
+            .map(|ct| ct != challenge.current())
+            .unwrap_or(true);
+
+    let community = register
+        .community_token
+        .and_then(|t| shared.config.community_for_token(&t).transpose())
+        .transpose()
+        .map_err(RegisterError::new)?
+        .map(|c| ArrayString::from(c))
+        .transpose()
+        .map_err(|_| "invalid community name length")?;
 
     let result = if correct_challenge {
         let raw_info = register
@@ -718,8 +819,7 @@ fn handle_register(
                 let info = i.as_object().ok_or("register info must be an object")?;
 
                 // Normalize the JSON to strip any spaces etc.
-                let raw_info = json::to_string(&info).unwrap();
-                Ok(json::value::RawValue::from_string(raw_info).unwrap())
+                Ok(json::value::to_raw_value(&info).unwrap())
             })
             .transpose()?;
 
@@ -728,11 +828,12 @@ fn handle_register(
             AddrInfo {
                 kind: EntryKind::Mastersrv,
                 ping_time: shared.timekeeper.now(),
-                location: shared.locations.lookup(addr.ip),
+                location: shared.config.locations.lookup(addr.ip),
                 secret: register.secret,
             },
             register.info_serial,
             raw_info.map(Cow::Owned),
+            community.as_ref(),
         );
         match add_result {
             AddResult::Added => debug!("successfully registered {}", addr),
@@ -822,10 +923,15 @@ fn register_from_headers(
         connless_request_token: parse_opt(headers, "Connless-Token")?,
         challenge_secret: parse(headers, "Challenge-Secret")?,
         challenge_token: parse_opt(headers, "Challenge-Token")?,
+        community_token: parse_opt(headers, "Community-Token")?,
         info_serial: parse(headers, "Info-Serial")?,
         info: if !info.is_empty() {
-            if headers.typed_get() != Some(headers::ContentType::json()) {
-                return Err(RegisterError::unsupported_media_type());
+            match headers
+                .typed_get::<headers::ContentType>()
+                .map(mime::Mime::from)
+            {
+                Some(mime) if mime.essence_str() == mime::APPLICATION_JSON => {}
+                _ => return Err(RegisterError::unsupported_media_type()),
             }
             Some(json::from_slice(info).map_err(|e| {
                 RegisterError::new(format!("Request body deserialize error: {}", e))
@@ -877,6 +983,15 @@ struct AssertUnwindSafe<T>(pub T);
 impl<T> panic::UnwindSafe for AssertUnwindSafe<T> {}
 impl<T> panic::RefUnwindSafe for AssertUnwindSafe<T> {}
 
+macro_rules! fatal {
+    ($($arg:tt)*) => {
+        {
+            eprintln!($($arg)*);
+            process::exit(1);
+        }
+    }
+}
+
 // TODO: put active part masterservers on a different domain?
 #[tokio::main]
 async fn main() {
@@ -898,7 +1013,13 @@ async fn main() {
         .arg(Arg::with_name("locations")
             .long("locations")
             .value_name("LOCATIONS")
-            .help("IP to continent locations database filename (CSV file with network,continent_code header).")
+            .help("IP to continent locations database filename (libloc format, can be obtained from https://location.ipfire.org/databases/1/location.db.xz).")
+            .conflicts_with("config")
+        )
+        .arg(Arg::with_name("config")
+            .long("config")
+            .value_name("CONFIG")
+            .help("TOML config (can be re-read using SIGHUP signal)")
         )
         .arg(Arg::with_name("write-addresses")
             .long("write-addresses")
@@ -921,6 +1042,10 @@ async fn main() {
             .takes_value(true)
             .value_name("DUMP_DIR")
             .help("Read dumps from other mastersrv instances from the specified directory (looking only at *.json files).")
+        )
+        .arg(Arg::with_name("test-servers-route")
+            .long("test-servers-route")
+            .help("Enable /ddnet/15/test-servers.json route for testing")
         )
         .arg(Arg::with_name("out")
             .long("out")
@@ -951,18 +1076,24 @@ async fn main() {
     } else {
         None
     };
+    let read_dump_dir = matches.value_of("read-dump-dir").map(|s| s.to_owned());
     let read_write_dump = matches.value_of("read-write-dump").map(|s| s.to_owned());
+    let test_servers_route = matches.is_present("test-servers-route");
+    let config_filename = matches.value_of("config");
 
+    let config_location = match (config_filename, matches.value_of("locations")) {
+        (None, None) => ConfigLocation::None,
+        (None, Some(l)) => ConfigLocation::LocationsFileParameter(l.into()),
+        (Some(f), None) => ConfigLocation::File(f.into()),
+        (Some(_), Some(_)) => unreachable!(),
+    };
+    let config = Arc::new(ArcSwap::from_pointee(
+        config_location.read().unwrap_or_else(|err| {
+            fatal!("couldn't read config: {}", err);
+        }),
+    ));
     let timekeeper = Timekeeper::new();
     let challenger = Arc::new(Mutex::new(Challenger::new()));
-    let locations = Arc::new(
-        matches
-            .value_of("locations")
-            .map(|l| Locations::read(Path::new(&l)))
-            .transpose()
-            .unwrap()
-            .unwrap_or_else(Locations::empty),
-    );
     let mut servers = Servers::new();
     match &read_write_dump {
         Some(path) => match read_dump(Path::new(&path), timekeeper).await {
@@ -983,8 +1114,9 @@ async fn main() {
 
     let task_reseed = tokio::spawn(handle_periodic_reseed(challenger.clone()));
     let task_writeout = tokio::spawn(handle_periodic_writeout(
+        config.clone(),
         servers.clone(),
-        matches.value_of("read-dump-dir").map(|s| s.to_owned()),
+        read_dump_dir.clone(),
         matches
             .value_of("write-dump")
             .map(|s| s.to_owned())
@@ -993,6 +1125,7 @@ async fn main() {
         matches.value_of("out").unwrap().to_owned(),
         timekeeper,
     ));
+    let task_reread = tokio::spawn(handle_config_reread(config_location, config.clone()));
 
     let connecting_addr = move |addr: Option<SocketAddr>,
                                 headers: &warp::http::HeaderMap|
@@ -1009,11 +1142,8 @@ async fn main() {
             addr.unwrap().ip()
         };
         if let IpAddr::V6(v6) = addr {
-            if let Some(v4) = v6.to_ipv4() {
-                // TODO: switch to `to_ipv4_mapped` in the future.
-                if !v6.is_loopback() {
-                    addr = IpAddr::from(v4);
-                }
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                addr = IpAddr::from(v4);
             }
         }
         Ok(addr)
@@ -1041,14 +1171,17 @@ async fn main() {
         .and(warp::post())
         .and(warp::header::headers_cloned())
         .and(warp::addr::remote())
-        .and(warp::body::content_length_limit(16 * 1024)) // limit body size to 16 KiB
+        .and(warp::body::content_length_limit(32 * 1024)) // limit body size to 32 KiB
         .and(warp::body::bytes())
-        .map(
+        .map({
+            let config = config.clone();
+            let servers = servers.clone();
             move |headers: warp::http::HeaderMap, addr: Option<SocketAddr>, info: bytes::Bytes| {
                 build_response(|| {
+                    let config = config.load();
                     let shared = Shared {
                         challenger: &challenger,
-                        locations: &locations,
+                        config: &config,
                         servers: &servers,
                         socket: &socket.0,
                         timekeeper,
@@ -1068,10 +1201,28 @@ async fn main() {
                         }
                     }
                 })
-            },
-        )
-        .recover(recover);
-    let server = warp::serve(register);
+            }
+        });
+    let test_servers = warp::path!("ddnet" / "15" / "test-servers.json")
+        .and(warp::get())
+        .and_then({
+            let config = config.clone();
+            let servers = servers.clone();
+            let read_dump_dir = read_dump_dir.clone();
+            move || {
+                let config = config.clone();
+                let servers = servers.clone();
+                let read_dump_dir = read_dump_dir.clone();
+                async move {
+                    if test_servers_route {
+                        Ok(handle_test_servers_json(config.load_full(), servers, read_dump_dir, timekeeper).await)
+                    } else {
+                        Err(warp::reject())
+                    }
+                }
+            }
+        });
+    let server = warp::serve(register.or(test_servers).recover(recover));
 
     let task_server = if let Some(path) = listen_unix {
         #[cfg(unix)]
@@ -1091,8 +1242,8 @@ async fn main() {
         tokio::spawn(server.run(listen_address))
     };
 
-    match tokio::try_join!(task_reseed, task_writeout, task_server) {
-        Ok(((), (), ())) => unreachable!(),
+    match tokio::try_join!(task_reseed, task_writeout, task_reread, task_server) {
+        Ok(((), (), (), ())) => unreachable!(),
         Err(e) => panic::resume_unwind(e.into_panic()),
     }
 }

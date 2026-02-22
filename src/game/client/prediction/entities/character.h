@@ -3,27 +3,21 @@
 #ifndef GAME_CLIENT_PREDICTION_ENTITIES_CHARACTER_H
 #define GAME_CLIENT_PREDICTION_ENTITIES_CHARACTER_H
 
+#include <generated/protocol.h>
+
 #include <game/client/prediction/entity.h>
-
 #include <game/gamecore.h>
+#include <game/race_state.h>
 
 enum
 {
-	WEAPON_GAME = -3, // team switching etc
-	WEAPON_SELF = -2, // console kill command
-	WEAPON_WORLD = -1, // death tiles etc
-};
-
-enum
-{
-	FAKETUNE_FREEZE = 1,
-	FAKETUNE_SOLO = 2,
-	FAKETUNE_NOJUMP = 4,
-	FAKETUNE_NOCOLL = 8,
-	FAKETUNE_NOHOOK = 16,
-	FAKETUNE_JETPACK = 32,
-	FAKETUNE_NOHAMMER = 64,
-
+	FAKETUNE_FREEZE = 1 << 0,
+	FAKETUNE_SOLO = 1 << 1,
+	FAKETUNE_NOJUMP = 1 << 2,
+	FAKETUNE_NOCOLL = 1 << 3,
+	FAKETUNE_NOHOOK = 1 << 4,
+	FAKETUNE_JETPACK = 1 << 5,
+	FAKETUNE_NOHAMMER = 1 << 6,
 };
 
 class CCharacter : public CEntity
@@ -31,18 +25,17 @@ class CCharacter : public CEntity
 	friend class CGameWorld;
 
 public:
-	~CCharacter();
+	~CCharacter() override;
 
-	//character's size
-	static const int ms_PhysSize = 28;
-
+	void PreTick() override;
 	void Tick() override;
-	void TickDefered() override;
+	void TickDeferred() override;
 
 	bool IsGrounded();
 
-	void SetWeapon(int W);
+	void SetWeapon(int Weapon);
 	void SetSolo(bool Solo);
+	void SetSuper(bool Super);
 	void HandleWeaponSwitch();
 	void DoWeaponSwitch();
 
@@ -50,8 +43,10 @@ public:
 	void HandleNinja();
 	void HandleJetpack();
 
-	void OnPredictedInput(CNetObj_PlayerInput *pNewInput);
-	void OnDirectInput(CNetObj_PlayerInput *pNewInput);
+	void OnPredictedInput(const CNetObj_PlayerInput *pNewInput);
+	void OnDirectInput(const CNetObj_PlayerInput *pNewInput);
+	void ReleaseHook();
+	void ResetHook();
 	void ResetInput();
 	void FireWeapon();
 
@@ -61,35 +56,25 @@ public:
 	void GiveNinja();
 	void RemoveNinja();
 
+	void ResetVelocity();
+	void SetVelocity(vec2 NewVelocity);
+	void SetRawVelocity(vec2 NewVelocity);
+	void AddVelocity(vec2 Addition);
+	void ApplyMoveRestrictions();
+
 	bool m_IsLocal;
 
 	CTeamsCore *TeamsCore();
 	bool Freeze(int Seconds);
 	bool Freeze();
-	bool UnFreeze();
+	bool Unfreeze();
 	void GiveAllWeapons();
 	int Team();
-	bool CanCollide(int ClientID);
-	bool SameTeam(int ClientID);
-	bool m_Super;
-	bool m_SuperJump;
-	bool m_Jetpack;
+	bool CanCollide(int ClientId) override;
+	bool SameTeam(int ClientId);
 	bool m_NinjaJetpack;
 	int m_FreezeTime;
 	bool m_FrozenLastTick;
-	bool m_DeepFreeze;
-	bool m_LiveFreeze;
-	bool m_EndlessHook;
-	enum
-	{
-		HIT_ALL = 0,
-		DISABLE_HIT_HAMMER = 1,
-		DISABLE_HIT_SHOTGUN = 2,
-		DISABLE_HIT_GRENADE = 4,
-		DISABLE_HIT_LASER = 8
-	};
-	int m_Hit;
-	int m_TuneZone;
 	vec2 m_PrevPos;
 	vec2 m_PrevPrevPos;
 	int m_TeleCheckpoint;
@@ -97,17 +82,16 @@ public:
 	int m_TileIndex;
 	int m_TileFIndex;
 
-	int m_MoveRestrictions;
 	bool m_LastRefillJumps;
 
 	// Setters/Getters because i don't want to modify vanilla vars access modifiers
-	int GetLastWeapon() { return m_LastWeapon; }
+	int GetLastWeapon() const { return m_LastWeapon; }
 	void SetLastWeapon(int LastWeap) { m_LastWeapon = LastWeap; }
-	int GetActiveWeapon() { return m_Core.m_ActiveWeapon; }
-	void SetActiveWeapon(int ActiveWeap);
+	int GetActiveWeapon() const { return m_Core.m_ActiveWeapon; }
+	void SetActiveWeapon(int ActiveWeapon);
 	CCharacterCore GetCore() { return m_Core; }
-	void SetCore(CCharacterCore Core) { m_Core = Core; }
-	CCharacterCore *Core() { return &m_Core; }
+	void SetCore(const CCharacterCore &Core) { m_Core = Core; }
+	const CCharacterCore *Core() const { return &m_Core; }
 	bool GetWeaponGot(int Type) { return m_Core.m_aWeapons[Type].m_Got; }
 	void SetWeaponGot(int Type, bool Value) { m_Core.m_aWeapons[Type].m_Got = Value; }
 	int GetWeaponAmmo(int Type) { return m_Core.m_aWeapons[Type].m_Ammo; }
@@ -115,8 +99,8 @@ public:
 	void SetNinjaActivationDir(vec2 ActivationDir) { m_Core.m_Ninja.m_ActivationDir = ActivationDir; }
 	void SetNinjaActivationTick(int ActivationTick) { m_Core.m_Ninja.m_ActivationTick = ActivationTick; }
 	void SetNinjaCurrentMoveTime(int CurrentMoveTime) { m_Core.m_Ninja.m_CurrentMoveTime = CurrentMoveTime; }
-	int GetCID() { return m_ID; }
-	void SetInput(CNetObj_PlayerInput *pNewInput)
+	int GetCid() { return m_Id; }
+	void SetInput(const CNetObj_PlayerInput *pNewInput)
 	{
 		m_LatestInput = m_Input = *pNewInput;
 		// it is not allowed to aim in the center
@@ -124,28 +108,36 @@ public:
 		{
 			m_Input.m_TargetY = m_LatestInput.m_TargetY = -1;
 		}
-	};
-	int GetJumped() { return m_Core.m_Jumped; }
-	int GetAttackTick() { return m_AttackTick; }
-	int GetStrongWeakID() { return m_StrongWeakID; }
+	}
+	int GetJumped() const { return m_Core.m_Jumped; }
+	int GetAttackTick() const { return m_AttackTick; }
+	int GetStrongWeakId() const { return m_StrongWeakId; }
 
-	CCharacter(CGameWorld *pGameWorld, int ID, CNetObj_Character *pChar, CNetObj_DDNetCharacter *pExtended = 0, CNetObj_DDNetCharacterDisplayInfo *pExtendedDisplayInfo = 0);
-	void Read(CNetObj_Character *pChar, CNetObj_DDNetCharacter *pExtended, CNetObj_DDNetCharacterDisplayInfo *pExtendedDisplayInfo, bool IsLocal);
+	CCharacter(CGameWorld *pGameWorld, int Id, CNetObj_Character *pChar, CNetObj_DDNetCharacter *pExtended = nullptr);
+	void Read(CNetObj_Character *pChar, CNetObj_DDNetCharacter *pExtended, bool IsLocal);
 	void SetCoreWorld(CGameWorld *pGameWorld);
 
 	int m_LastSnapWeapon;
-	int m_LastJetpackStrength;
 	bool m_KeepHooked;
 	int m_GameTeam;
 	bool m_CanMoveInFreeze;
 
-	bool Match(CCharacter *pChar);
+	bool Match(CCharacter *pChar) const;
 	void ResetPrediction();
 	void SetTuneZone(int Zone);
+	int GetOverriddenTuneZone() const;
+	int GetPureTuneZone() const;
+
+	bool HammerHitDisabled() const { return m_Core.m_HammerHitDisabled; }
+	bool ShotgunHitDisabled() const { return m_Core.m_ShotgunHitDisabled; }
+	bool LaserHitDisabled() const { return m_Core.m_LaserHitDisabled; }
+	bool GrenadeHitDisabled() const { return m_Core.m_GrenadeHitDisabled; }
+
+	bool IsSuper() const { return m_Core.m_Super; }
 
 private:
 	// weapon info
-	int m_aHitObjects[10];
+	int m_aHitObjects[MAX_CLIENTS];
 	int m_NumObjectsHit;
 
 	int m_LastWeapon;
@@ -153,6 +145,10 @@ private:
 
 	int m_ReloadTimer;
 	int m_AttackTick;
+
+	int m_MoveRestrictions;
+
+	int m_PainSoundTimer;
 
 	// these are non-heldback inputs
 	CNetObj_PlayerInput m_LatestPrevInput;
@@ -164,6 +160,10 @@ private:
 	CNetObj_PlayerInput m_SavedInput;
 
 	int m_NumInputs;
+
+	// tune
+	int m_TuneZone;
+	int m_TuneZoneOverride;
 
 	// the player core for the physics
 	CCharacterCore m_Core;
@@ -177,20 +177,10 @@ private:
 	void DDRacePostCoreTick();
 	void HandleTuneLayer();
 
-	CTuningParams *CharacterTuning();
-
-	int m_StrongWeakID;
+	int m_StrongWeakId;
 
 	int m_LastWeaponSwitchTick;
 	int m_LastTuneZoneTick;
-};
-
-enum
-{
-	DDRACE_NONE = 0,
-	DDRACE_STARTED,
-	DDRACE_CHEAT, // no time and won't start again unless ordered by a mod or death
-	DDRACE_FINISHED
 };
 
 #endif

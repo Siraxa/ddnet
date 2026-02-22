@@ -2,6 +2,7 @@
 /* If you are missing that file, acquire a complete release at teeworlds.com.                */
 
 #include "entity.h"
+
 #include "gamecontext.h"
 #include "player.h"
 
@@ -18,16 +19,16 @@ CEntity::CEntity(CGameWorld *pGameWorld, int ObjType, vec2 Pos, int ProximityRad
 	m_ProximityRadius = ProximityRadius;
 
 	m_MarkedForDestroy = false;
-	m_ID = Server()->SnapNewID();
+	m_Id = Server()->SnapNewId();
 
-	m_pPrevTypeEntity = 0;
-	m_pNextTypeEntity = 0;
+	m_pPrevTypeEntity = nullptr;
+	m_pNextTypeEntity = nullptr;
 }
 
 CEntity::~CEntity()
 {
 	GameWorld()->RemoveEntity(this);
-	Server()->SnapFreeID(m_ID);
+	Server()->SnapFreeId(m_Id);
 }
 
 bool CEntity::NetworkClipped(int SnappingClient) const
@@ -74,12 +75,12 @@ bool CEntity::GetNearestAirPos(vec2 Pos, vec2 PrevPos, vec2 *pOutPos)
 	return !GameServer()->Collision()->TestBox(*pOutPos, CCharacterCore::PhysicalSizeVec2());
 }
 
-bool CEntity::GetNearestAirPosPlayer(vec2 PlayerPos, vec2 *OutPos)
+bool CEntity::GetNearestAirPosPlayer(vec2 PlayerPos, vec2 *pOutPos)
 {
-	for(int dist = 5; dist >= -1; dist--)
+	for(int Distance = 5; Distance >= -1; Distance--)
 	{
-		*OutPos = vec2(PlayerPos.x, PlayerPos.y - dist);
-		if(!GameServer()->Collision()->TestBox(*OutPos, CCharacterCore::PhysicalSizeVec2()))
+		*pOutPos = vec2(PlayerPos.x, PlayerPos.y - Distance);
+		if(!GameServer()->Collision()->TestBox(*pOutPos, CCharacterCore::PhysicalSizeVec2()))
 		{
 			return true;
 		}

@@ -1,6 +1,7 @@
 #include "glsl_shader_compiler.h"
 
 #include <base/system.h>
+
 #include <engine/graphics.h>
 
 CGLSLCompiler::CGLSLCompiler(int OpenGLVersionMajor, int OpenGLVersionMinor, int OpenGLVersionPatch, bool IsOpenGLES, float TextureLODBias)
@@ -19,7 +20,7 @@ CGLSLCompiler::CGLSLCompiler(int OpenGLVersionMajor, int OpenGLVersionMinor, int
 
 void CGLSLCompiler::AddDefine(const std::string &DefineName, const std::string &DefineValue)
 {
-	m_vDefines.emplace_back(SGLSLCompilerDefine(DefineName, DefineValue));
+	m_vDefines.emplace_back(DefineName, DefineValue);
 }
 
 void CGLSLCompiler::AddDefine(const char *pDefineName, const char *pDefineValue)
@@ -67,7 +68,7 @@ void CGLSLCompiler::ParseLine(std::string &Line, const char *pReadLine, EGLSLSha
 						++pBuff;
 					}
 
-					if(*pBuff == ' ' && *(pBuff + 1) && *(pBuff + 1) == 'i' && *(pBuff + 2) == 'n')
+					if(*pBuff == ' ' && *(pBuff + 1) == 'i' && *(pBuff + 2) == 'n')
 					{
 						pBuff += 3;
 						Line.append("attribute");
@@ -84,6 +85,8 @@ void CGLSLCompiler::ParseLine(std::string &Line, const char *pReadLine, EGLSLSha
 					//search for 'in' or 'out'
 					while(*pBuff && ((*pBuff != 'i' || *(pBuff + 1) != 'n') && (*pBuff != 'o' || (*(pBuff + 1) && *(pBuff + 1) != 'u') || *(pBuff + 2) != 't')))
 					{
+						// append anything that is inbetween noperspective & in/out vars
+						Line.push_back(*pBuff);
 						++pBuff;
 					}
 
@@ -95,7 +98,7 @@ void CGLSLCompiler::ParseLine(std::string &Line, const char *pReadLine, EGLSLSha
 							pBuff += 2;
 							Found = true;
 						}
-						else if(*pBuff == 'o' && *(pBuff + 1) && *(pBuff + 1) == 'u' && *(pBuff + 2) == 't')
+						else if(*pBuff == 'o' && *(pBuff + 1) == 'u' && *(pBuff + 2) == 't')
 						{
 							pBuff += 3;
 							Found = true;
@@ -183,7 +186,7 @@ void CGLSLCompiler::ParseLine(std::string &Line, const char *pReadLine, EGLSLSha
 						Line.append(pBuff);
 						return;
 					}
-					// since GLES doesnt support texture LOD bias as global state, use the shader function instead(since GLES 3.0 uses shaders only anyway)
+					// since GLES doesn't support texture LOD bias as global state, use the shader function instead(since GLES 3.0 uses shaders only anyway)
 					else if(str_comp(aTmpStr, "texture") == 0)
 					{
 						Line.append("texture");

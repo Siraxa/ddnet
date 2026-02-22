@@ -3,7 +3,10 @@
 #ifndef GAME_CLIENT_COMPONENTS_COUNTRYFLAGS_H
 #define GAME_CLIENT_COMPONENTS_COUNTRYFLAGS_H
 
+#include <engine/graphics.h>
+
 #include <game/client/component.h>
+
 #include <vector>
 
 class CCountryFlags : public CComponent
@@ -18,13 +21,14 @@ public:
 		bool operator<(const CCountryFlag &Other) const { return str_comp(m_aCountryCodeString, Other.m_aCountryCodeString) < 0; }
 	};
 
-	virtual int Sizeof() const override { return sizeof(*this); }
+	int Sizeof() const override { return sizeof(*this); }
 	void OnInit() override;
 
 	size_t Num() const;
-	const CCountryFlag *GetByCountryCode(int CountryCode) const;
-	const CCountryFlag *GetByIndex(size_t Index) const;
-	void Render(int CountryCode, const ColorRGBA *pColor, float x, float y, float w, float h);
+	const CCountryFlag &GetByCountryCode(int CountryCode) const;
+	const CCountryFlag &GetByIndex(size_t Index) const;
+	void Render(const CCountryFlag &Flag, ColorRGBA Color, float x, float y, float w, float h);
+	void Render(int CountryCode, ColorRGBA Color, float x, float y, float w, float h);
 
 private:
 	enum
@@ -34,7 +38,7 @@ private:
 		CODE_RANGE = CODE_UB - CODE_LB + 1,
 	};
 	std::vector<CCountryFlag> m_vCountryFlags;
-	size_t m_CodeIndexLUT[CODE_RANGE];
+	size_t m_aCodeIndexLUT[CODE_RANGE];
 
 	int m_FlagsQuadContainerIndex;
 

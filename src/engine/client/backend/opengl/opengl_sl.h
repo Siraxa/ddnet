@@ -1,5 +1,5 @@
 // This file can be included several times.
-#if(!defined(BACKEND_AS_OPENGL_ES) && !defined(ENGINE_CLIENT_BACKEND_OPENGL_OPENGL_SL_H)) || \
+#if (!defined(BACKEND_AS_OPENGL_ES) && !defined(ENGINE_CLIENT_BACKEND_OPENGL_OPENGL_SL_H)) || \
 	(defined(BACKEND_AS_OPENGL_ES) && !defined(ENGINE_CLIENT_BACKEND_OPENGL_OPENGL_SL_H_AS_ES))
 
 #if !defined(BACKEND_AS_OPENGL_ES) && !defined(ENGINE_CLIENT_BACKEND_OPENGL_OPENGL_SL_H)
@@ -20,14 +20,14 @@ public:
 	bool LoadShader(CGLSLCompiler *pCompiler, class IStorage *pStorage, const char *pFile, int Type);
 	void DeleteShader();
 
-	bool IsLoaded();
-	TWGLuint GetShaderID();
+	bool IsLoaded() const;
+	TWGLuint GetShaderId() const;
 
 	CGLSL();
 	virtual ~CGLSL();
 
 private:
-	TWGLuint m_ShaderID;
+	TWGLuint m_ShaderId;
 	int m_Type;
 	bool m_IsLoaded;
 };

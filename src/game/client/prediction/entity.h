@@ -4,53 +4,48 @@
 #define GAME_CLIENT_PREDICTION_ENTITY_H
 
 #include "gameworld.h"
+
 #include <base/vmath.h>
 
-#define MACRO_ALLOC_HEAP() \
-public: \
-	void *operator new(size_t Size) \
-	{ \
-		void *p = malloc(Size); \
-		mem_zero(p, Size); \
-		return p; \
-	} \
-	void operator delete(void *pPtr) \
-	{ \
-		free(pPtr); \
-	} \
-\
-private:
+#include <game/alloc.h>
 
 class CEntity
 {
 	MACRO_ALLOC_HEAP()
-	friend class CGameWorld; // entity list handling
+
+private:
+	friend CGameWorld; // entity list handling
 	CEntity *m_pPrevTypeEntity;
 	CEntity *m_pNextTypeEntity;
 
 protected:
-	class CGameWorld *m_pGameWorld;
+	CGameWorld *m_pGameWorld;
 	bool m_MarkedForDestroy;
-	int m_ID;
+	int m_Id;
 	int m_ObjType;
 
 public:
+	int GetId() const { return m_Id; }
+
 	CEntity(CGameWorld *pGameWorld, int Objtype, vec2 Pos = vec2(0, 0), int ProximityRadius = 0);
 	virtual ~CEntity();
 
 	std::vector<SSwitchers> &Switchers() { return m_pGameWorld->Switchers(); }
-	class CGameWorld *GameWorld() { return m_pGameWorld; }
-	CTuningParams *Tuning() { return GameWorld()->Tuning(); }
+	CGameWorld *GameWorld() { return m_pGameWorld; }
+	CTuningParams *GlobalTuning() { return &GameWorld()->TuningList()[0]; }
 	CTuningParams *TuningList() { return GameWorld()->TuningList(); }
 	CTuningParams *GetTuning(int i) { return GameWorld()->GetTuning(i); }
 	class CCollision *Collision() { return GameWorld()->Collision(); }
 	CEntity *TypeNext() { return m_pNextTypeEntity; }
 	CEntity *TypePrev() { return m_pPrevTypeEntity; }
+	const vec2 &GetPos() const { return m_Pos; }
 	float GetProximityRadius() const { return m_ProximityRadius; }
+	virtual bool CanCollide(int ClientId) { return true; }
 
-	void Destroy() { delete this; }
+	virtual void Destroy() { delete this; }
+	virtual void PreTick() {}
 	virtual void Tick() {}
-	virtual void TickDefered() {}
+	virtual void TickDeferred() {}
 
 	bool GameLayerClipped(vec2 CheckPos);
 	float m_ProximityRadius;
@@ -62,8 +57,8 @@ public:
 	int m_DestroyTick;
 	int m_LastRenderTick;
 	CEntity *m_pParent;
+	CEntity *m_pChild;
 	CEntity *NextEntity() { return m_pNextTypeEntity; }
-	int ID() { return m_ID; }
 	void Keep()
 	{
 		m_SnapTicks = 0;
@@ -72,8 +67,8 @@ public:
 
 	CEntity()
 	{
-		m_ID = -1;
-		m_pGameWorld = 0;
+		m_Id = -1;
+		m_pGameWorld = nullptr;
 	}
 };
 

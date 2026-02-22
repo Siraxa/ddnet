@@ -2,16 +2,17 @@
 #define GAME_SERVER_TEEHISTORIAN_H
 
 #include <base/hash.h>
+
 #include <engine/console.h>
 #include <engine/shared/protocol.h>
-#include <game/generated/protocol.h>
 
-#include <time.h>
+#include <generated/protocol.h>
+
+#include <ctime>
 
 class CConfig;
 class CTuningParams;
 class CUuidManager;
-class CPlayer;
 
 class CTeeHistorian
 {
@@ -34,6 +35,9 @@ public:
 		SHA256_DIGEST m_MapSha256;
 		int m_MapCrc;
 
+		bool m_HavePrevGameUuid;
+		CUuid m_PrevGameUuid;
+
 		CConfig *m_pConfig;
 		CTuningParams *m_pTuning;
 		CUuidManager *m_pUuids;
@@ -55,42 +59,49 @@ public:
 	void BeginTick(int Tick);
 
 	void BeginPlayers();
-	void RecordPlayer(int ClientID, const CNetObj_CharacterCore *pChar);
-	void RecordDeadPlayer(int ClientID);
-	void RecordPlayerTeam(int ClientID, int Team);
+	void RecordPlayer(int ClientId, const CNetObj_CharacterCore *pChar);
+	void RecordDeadPlayer(int ClientId);
+	void RecordPlayerTeam(int ClientId, int Team);
 	void RecordTeamPractice(int Team, bool Practice);
 	void EndPlayers();
 
 	void BeginInputs();
-	void RecordPlayerInput(int ClientID, uint32_t UniqueClientID, const CNetObj_PlayerInput *pInput);
-	void RecordPlayerMessage(int ClientID, const void *pMsg, int MsgSize);
-	void RecordPlayerJoin(int ClientID, int Protocol);
-	void RecordPlayerReady(int ClientID);
-	void RecordPlayerDrop(int ClientID, const char *pReason);
-	void RecordConsoleCommand(int ClientID, int FlagMask, const char *pCmd, IConsole::IResult *pResult);
+	void RecordPlayerInput(int ClientId, uint32_t UniqueClientId, const CNetObj_PlayerInput *pInput);
+	void RecordPlayerMessage(int ClientId, const void *pMsg, int MsgSize);
+	void RecordPlayerJoin(int ClientId, int Protocol);
+	void RecordPlayerRejoin(int ClientId);
+	void RecordPlayerReady(int ClientId);
+	void RecordPlayerDrop(int ClientId, const char *pReason);
+	void RecordPlayerName(int ClientId, const char *pName);
+	void RecordConsoleCommand(int ClientId, int FlagMask, const char *pCmd, IConsole::IResult *pResult);
 	void RecordTestExtra();
-	void RecordPlayerSwap(int ClientID1, int ClientID2);
-	void RecordTeamSaveSuccess(int Team, CUuid SaveID, const char *pTeamSave);
+	void RecordPlayerSwap(int ClientId1, int ClientId2);
+	void RecordTeamSaveSuccess(int Team, CUuid SaveId, const char *pTeamSave);
 	void RecordTeamSaveFailure(int Team);
-	void RecordTeamLoadSuccess(int Team, CUuid SaveID, const char *pTeamSave);
+	void RecordTeamLoadSuccess(int Team, CUuid SaveId, const char *pTeamSave);
 	void RecordTeamLoadFailure(int Team);
 	void EndInputs();
 
 	void EndTick();
 
-	void RecordDDNetVersionOld(int ClientID, int DDNetVersion);
-	void RecordDDNetVersion(int ClientID, CUuid ConnectionID, int DDNetVersion, const char *pDDNetVersionStr);
+	void RecordDDNetVersionOld(int ClientId, int DDNetVersion);
+	void RecordDDNetVersion(int ClientId, CUuid ConnectionId, int DDNetVersion, const char *pDDNetVersionStr);
 
-	void RecordAuthInitial(int ClientID, int Level, const char *pAuthName);
-	void RecordAuthLogin(int ClientID, int Level, const char *pAuthName);
-	void RecordAuthLogout(int ClientID);
+	void RecordAuthInitial(int ClientId, int Level, const char *pAuthName);
+	void RecordAuthLogin(int ClientId, int Level, const char *pAuthName);
+	void RecordAuthLogout(int ClientId);
+
+	void RecordAntibot(const void *pData, int DataSize);
+
+	void RecordPlayerFinish(int ClientId, int TimeTicks);
+	void RecordTeamFinish(int TeamId, int TimeTicks);
 
 	int m_Debug; // Possible values: 0, 1, 2.
 
 private:
 	void WriteHeader(const CGameInfo *pGameInfo);
 	void WriteExtra(CUuid Uuid, const void *pData, int DataSize);
-	void EnsureTickWrittenPlayerData(int ClientID);
+	void EnsureTickWrittenPlayerData(int ClientId);
 	void EnsureTickWritten();
 	void WriteTick();
 	void Write(const void *pData, int DataSize);
@@ -114,7 +125,7 @@ private:
 		int m_Y;
 
 		CNetObj_PlayerInput m_Input;
-		uint32_t m_UniqueClientID;
+		uint32_t m_UniqueClientId;
 
 		// DDNet team
 		int m_Team;
@@ -133,8 +144,8 @@ private:
 	int m_LastWrittenTick;
 	bool m_TickWritten;
 	int m_Tick;
-	int m_PrevMaxClientID;
-	int m_MaxClientID;
+	int m_PrevMaxClientId;
+	int m_MaxClientId;
 	CTeehistorianPlayer m_aPrevPlayers[MAX_CLIENTS];
 	CTeam m_aPrevTeams[MAX_CLIENTS];
 };

@@ -1,6 +1,9 @@
 #ifndef TEST_TEST_H
 #define TEST_TEST_H
 
+#include <cstddef>
+#include <memory>
+
 class IStorage;
 
 class CTestInfo
@@ -8,8 +11,10 @@ class CTestInfo
 public:
 	CTestInfo();
 	~CTestInfo();
-	IStorage *CreateTestStorage();
+	std::unique_ptr<IStorage> CreateTestStorage();
 	bool m_DeleteTestStorageFilesOnSuccess = false;
-	char m_aFilename[64];
+	void Filename(char *pBuffer, size_t BufferLength, const char *pSuffix);
+	char m_aFilenamePrefix[128];
+	char m_aFilename[128];
 };
 #endif // TEST_TEST_H
